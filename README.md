@@ -1,16 +1,55 @@
-# React + Vite
+# Valorant Map Veto Tool
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A web-based tool for Valorant tournament map vetoes.
+Supports BO1, BO3, and BO5 formats with auto-decider, side picks, and full veto logs.
 
-Currently, two official plugins are available:
+Perfect for tournament organizers, casters, and observers.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+---
 
-## React Compiler
+## Features
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+* BO1, BO3, and BO5 map selection formats
+* Auto-decider for last remaining map
+* Side pick tracking
+* Undo last action
+* Custom map pool
+* Veto log and final series order display
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Installation
+
+1. Clone the repository:
+   git clone [https://github.com/Lehk1s/Valorant-map-veto-tool.git](https://github.com/Lehk1s/Valorant-map-veto-tool.git)
+   cd Valorant-map-veto-tool
+
+2. Install dependencies:
+   npm install
+
+3. Run the development server:
+   npm run dev
+
+Open your browser at [http://localhost:5173](http://localhost:5173) (or the URL shown in the terminal).
+
+---
+
+## Usage
+
+1. Enter team names.
+2. Select format (BO1, BO3, BO5 Grand Final).
+3. Click maps to ban or pick, follow prompts for side selections.
+4. See the veto log and final series order update in real-time.
+5. Add custom maps if needed.
+6. Use Undo to revert last action.
+
+---
+
+## Future Roadmap
+
+* Shareable URL state for live streaming and collaboration
+* Spectator / OBS overlay mode
+* Export veto log (text / PNG)
+* Coin toss / seed logic
+* Preset map pools
+* Live sync for remote teams
