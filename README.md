@@ -15,6 +15,7 @@ Perfect for tournament organizers, casters, and observers.
 * Undo last action
 * Custom map pool
 * Veto log and final series order display
+* Shareable URL (full veto state in link)
 
 ---
 
@@ -47,7 +48,6 @@ Open your browser at [http://localhost:5173](http://localhost:5173) (or the URL 
 
 ## Future Roadmap
 
-* Shareable URL state for live streaming and collaboration
 * Spectator / OBS overlay mode
 * Export veto log (text / PNG)
 * Coin toss / seed logic
