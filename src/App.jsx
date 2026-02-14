@@ -49,21 +49,86 @@ const FORMATS = {
   ],
 };
 
+const encodeState = (state) =>
+  btoa(unescape(encodeURIComponent(JSON.stringify(state))));
+
+const decodeState = (str) =>
+  JSON.parse(decodeURIComponent(escape(atob(str))));
+
 export default function ValorantVetoTool() {
   const [teamA, setTeamA] = useState("Team A");
   const [teamB, setTeamB] = useState("Team B");
   const [upperBracket, setUpperBracket] = useState("Team A");
+
   const [maps, setMaps] = useState(DEFAULT_MAPS);
   const [remaining, setRemaining] = useState(DEFAULT_MAPS);
   const [picked, setPicked] = useState([]);
   const [log, setLog] = useState([]);
+
   const [format, setFormat] = useState("BO1");
   const [step, setStep] = useState(0);
   const [history, setHistory] = useState([]);
+  const [hydrated, setHydrated] = useState(false);
 
   const currentAction = FORMATS[format][step];
 
-  const actor = () => {
+  const buildState = () => ({
+    teamA,
+    teamB,
+    upperBracket,
+    maps,
+    remaining,
+    picked,
+    log,
+    format,
+    step,
+  });
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const encoded = params.get("state");
+
+    if (!encoded) {
+      setHydrated(true);
+      return;
+    }
+
+    try {
+      const decoded = decodeState(encoded);
+      setTeamA(decoded.teamA);
+      setTeamB(decoded.teamB);
+      setUpperBracket(decoded.upperBracket);
+      setMaps(decoded.maps);
+      setRemaining(decoded.remaining);
+      setPicked(decoded.picked);
+      setLog(decoded.log);
+      setFormat(decoded.format);
+      setStep(decoded.step);
+    } catch {
+      console.error("Invalid URL state");
+    } finally {
+      setHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const encoded = encodeState(buildState());
+    window.history.replaceState(null, "", `?state=${encoded}`);
+  }, [
+    hydrated,
+    teamA,
+    teamB,
+    upperBracket,
+    maps,
+    remaining,
+    picked,
+    log,
+    format,
+    step,
+  ]);
+
+  const getActor = () => {
     if (!currentAction) return null;
     if (currentAction.startsWith("A")) return teamA;
     if (currentAction.startsWith("B")) return teamB;
@@ -71,7 +136,7 @@ export default function ValorantVetoTool() {
     return null;
   };
 
-  const actionLabel = () => {
+  const getActionLabel = () => {
     if (!currentAction) return "Done";
     if (currentAction.includes("ban")) return "Ban";
     if (currentAction.includes("pick")) return "Pick";
@@ -79,7 +144,7 @@ export default function ValorantVetoTool() {
     if (currentAction === "decider") return "Decider";
   };
 
-  const actionVerb = () => {
+  const getActionVerb = () => {
     if (!currentAction) return "";
     if (currentAction.includes("ban")) return "banned";
     if (currentAction.includes("pick")) return "picked";
@@ -88,61 +153,59 @@ export default function ValorantVetoTool() {
   };
 
   const saveHistory = () => {
-    setHistory([...history, { remaining, picked, log, step }]);
+    setHistory((h) => [...h, { remaining, picked, log, step }]);
   };
 
   const handleMapClick = (map) => {
-    if (!currentAction || currentAction.includes("side") || currentAction === "decider") return;
+    if (!currentAction) return;
+    if (currentAction.includes("side")) return;
+    if (currentAction === "decider") return;
 
     saveHistory();
 
-    let newRemaining = remaining.filter((m) => m !== map);
-    let newPicked = [...picked];
+    const newRemaining = remaining.filter((m) => m !== map);
+    const newPicked = [...picked];
 
     if (currentAction.includes("pick")) {
       newPicked.push({ map, side: null, sideBy: null });
     }
 
-    let entry = `${actor()} ${actionVerb()} ${map}`;
-
     setRemaining(newRemaining);
     setPicked(newPicked);
-    setLog([...log, entry]);
+    setLog([...log, `${getActor()} ${getActionVerb()} ${map}`]);
     setStep(step + 1);
   };
 
   const handleSidePick = (side) => {
     saveHistory();
 
-    let newPicked = [...picked];
-    const lastMap = newPicked[newPicked.length - 1].map;
+    const newPicked = [...picked];
+    const last = newPicked[newPicked.length - 1];
 
     newPicked[newPicked.length - 1] = {
-      ...newPicked[newPicked.length - 1],
+      ...last,
       side,
-      sideBy: actor(),
+      sideBy: getActor(),
     };
 
-    let entry = `${actor()} picked ${side} side on ${lastMap}`;
-
     setPicked(newPicked);
-    setLog([...log, entry]);
+    setLog([...log, `${getActor()} picked ${side} side on ${last.map}`]);
     setStep(step + 1);
   };
 
-  // AUTO DECIDER
   useEffect(() => {
-    if (currentAction === "decider" && remaining.length === 1) {
-      const map = remaining[0];
+    if (!hydrated) return;
 
+    if (currentAction === "decider" && remaining.length === 1) {
       saveHistory();
 
+      const map = remaining[0];
       setPicked([...picked, { map, side: null, sideBy: null }]);
       setRemaining([]);
       setLog([...log, `Decider map: ${map} (left over)`]);
       setStep(step + 1);
     }
-  }, [currentAction, remaining]);
+  }, [hydrated, currentAction, remaining]);
 
   const undo = () => {
     if (history.length === 0) return;
@@ -163,11 +226,12 @@ export default function ValorantVetoTool() {
   };
 
   const addMap = (name) => {
-    if (!maps.includes(name) && name.trim() !== "") {
-      const newPool = [...maps, name];
-      setMaps(newPool);
-      setRemaining(newPool);
-    }
+    if (!name.trim()) return;
+    if (maps.includes(name)) return;
+
+    const newPool = [...maps, name];
+    setMaps(newPool);
+    setRemaining(newPool);
   };
 
   return (
@@ -175,54 +239,88 @@ export default function ValorantVetoTool() {
       <h1 className="text-2xl font-bold">Valorant Tournament Veto Tool</h1>
 
       <div className="grid grid-cols-2 gap-2">
-        <input value={teamA} onChange={(e) => setTeamA(e.target.value)} className="border p-2 rounded" />
-        <input value={teamB} onChange={(e) => setTeamB(e.target.value)} className="border p-2 rounded" />
+        <input
+          value={teamA}
+          onChange={(e) => setTeamA(e.target.value)}
+          className="border p-2 rounded"
+        />
+        <input
+          value={teamB}
+          onChange={(e) => setTeamB(e.target.value)}
+          className="border p-2 rounded"
+        />
       </div>
 
       <div className="flex gap-2">
-        <select value={format} onChange={(e) => reset() || setFormat(e.target.value)} className="border p-2 rounded">
+        <select
+          value={format}
+          onChange={(e) => reset() || setFormat(e.target.value)}
+          className="border p-2 rounded"
+        >
           <option value="BO1">BO1</option>
           <option value="BO3">BO3</option>
           <option value="BO5">BO5 Grand Final</option>
         </select>
 
         {format === "BO5" && (
-          <select value={upperBracket} onChange={(e) => setUpperBracket(e.target.value)} className="border p-2 rounded">
+          <select
+            value={upperBracket}
+            onChange={(e) => setUpperBracket(e.target.value)}
+            className="border p-2 rounded"
+          >
             <option>{teamA}</option>
             <option>{teamB}</option>
           </select>
         )}
 
-        <button onClick={undo} className="border px-3 rounded">Undo</button>
+        <button onClick={undo} className="border px-3 rounded">
+          Undo
+        </button>
       </div>
 
       <div className="font-semibold">
-        Current: {actor() || "Complete"} - {actionLabel()}
+        Current: {getActor() || "Complete"} - {getActionLabel()}
       </div>
 
       {currentAction?.includes("side") && (
         <div className="flex gap-2">
-          <button onClick={() => handleSidePick("Attack")} className="border p-2 rounded">Attack</button>
-          <button onClick={() => handleSidePick("Defense")} className="border p-2 rounded">Defense</button>
+          <button
+            onClick={() => handleSidePick("Attack")}
+            className="border p-2 rounded"
+          >
+            Attack
+          </button>
+          <button
+            onClick={() => handleSidePick("Defense")}
+            className="border p-2 rounded"
+          >
+            Defense
+          </button>
         </div>
       )}
 
-      {!currentAction?.includes("side") && currentAction !== "decider" && (
-        <div className="grid grid-cols-3 gap-2">
-          {remaining.map((map) => (
-            <button key={map} onClick={() => handleMapClick(map)} className="border p-2 rounded">
-              {map}
-            </button>
-          ))}
-        </div>
-      )}
+      {!currentAction?.includes("side") &&
+        currentAction !== "decider" && (
+          <div className="grid grid-cols-3 gap-2">
+            {remaining.map((map) => (
+              <button
+                key={map}
+                onClick={() => handleMapClick(map)}
+                className="border p-2 rounded"
+              >
+                {map}
+              </button>
+            ))}
+          </div>
+        )}
 
       <div className="grid grid-cols-2 gap-4">
         <div>
           <h2 className="font-semibold">Final Series Order</h2>
           {picked.map((p, i) => (
             <div key={i}>
-              Map {i + 1}: {p.map} {p.side && `(Side: ${p.side} by ${p.sideBy})`}
+              Map {i + 1}: {p.map}{" "}
+              {p.side && `(Side: ${p.side} by ${p.sideBy})`}
             </div>
           ))}
         </div>
@@ -235,14 +333,21 @@ export default function ValorantVetoTool() {
         </div>
       </div>
 
-      <button onClick={reset} className="bg-black text-white px-4 py-2 rounded">Reset</button>
+      <button
+        onClick={reset}
+        className="bg-black text-white px-4 py-2 rounded"
+      >
+        Reset
+      </button>
 
       <div className="pt-4">
         <h2 className="font-semibold">Custom Map Pool</h2>
         <input
           placeholder="Add map name"
           className="border p-2 rounded"
-          onKeyDown={(e) => e.key === "Enter" && addMap(e.target.value)}
+          onKeyDown={(e) =>
+            e.key === "Enter" && addMap(e.target.value)
+          }
         />
       </div>
     </div>
