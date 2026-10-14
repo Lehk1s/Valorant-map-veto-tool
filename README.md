@@ -13,16 +13,20 @@ Perfect for tournament organizers, casters, and observers.
 * Auto-decider for last remaining map
 * Side pick tracking
 * Undo last action
-* Custom map pool
+* Full map list with individual map selection
+* Preset map pools (competitive pool, all maps) and custom maps
+* Map pool validation per format (exactly 7 maps)
+* Banned and picked maps shown visually
 * Veto log and final series order display
 * Shareable URL (full veto state in link)
+* Copy link and copy results buttons
 
 ---
 
 ## Installation
 
 1. Clone the repository:
-   git clone [https://github.com/Lehk1s/Valorant-map-veto-tool.git](https://github.com/Lehk1s/Valorant-map-veto-tool.git)
+   git clone https://github.com/Lehk1s/Valorant-map-veto-tool.git
    cd Valorant-map-veto-tool
 
 2. Install dependencies:
@@ -31,7 +35,7 @@ Perfect for tournament organizers, casters, and observers.
 3. Run the development server:
    npm run dev
 
-Open your browser at [http://localhost:5173](http://localhost:5173) (or the URL shown in the terminal).
+Open your browser at http://localhost:5173 (or the URL shown in the terminal).
 
 ---
 
@@ -39,10 +43,19 @@ Open your browser at [http://localhost:5173](http://localhost:5173) (or the URL 
 
 1. Enter team names.
 2. Select format (BO1, BO3, BO5 Grand Final).
-3. Click maps to ban or pick, follow prompts for side selections.
-4. See the veto log and final series order update in real-time.
-5. Add custom maps if needed.
-6. Use Undo to revert last action.
+3. Choose the map pool: use the competitive pool preset, select all maps, or pick maps one by one. The pool needs exactly 7 maps.
+4. Click maps to ban or pick, follow prompts for side selections.
+5. See the veto log and final series order update in real-time.
+6. Use Undo to revert the last action, or Reset to start over.
+7. Copy the link to share the current veto, or copy the results as text.
+
+The map pool and team names can only be changed before the veto starts.
+
+---
+
+## Tech Stack
+
+React, Vite, Tailwind CSS
 
 ---
 
@@ -51,5 +64,5 @@ Open your browser at [http://localhost:5173](http://localhost:5173) (or the URL 
 * Spectator / OBS overlay mode
 * Export veto log (text / PNG)
 * Coin toss / seed logic
-* Preset map pools
+* Map images
 * Live sync for remote teams

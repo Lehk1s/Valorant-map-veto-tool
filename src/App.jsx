@@ -1,13 +1,39 @@
-import { useState, useEffect } from "react";
+import { useEffect, useReducer, useState } from "react";
 
-const DEFAULT_MAPS = [
+/* ---------- Vakiot ---------- */
+
+// Kaikki kartat
+const ALL_MAPS = [
   "Abyss",
-  "Breeze",
+  "Ascent",
   "Bind",
+  "Breeze",
   "Corrode",
+  "Fracture",
   "Haven",
+  "Icebox",
+  "Lotus",
   "Pearl",
   "Split",
+  "Summit",
+  "Sunset",
+];
+
+// Nykyinen kilpailupooli
+const COMP_POOL = [
+  "Abyss",
+  "Ascent",
+  "Haven",
+  "Lotus",
+  "Split",
+  "Summit",
+  "Sunset",
+];
+
+// Tunnetut kartat ALL_MAPS-järjestyksessä, omat kartat perässä
+const normalizePool = (list) => [
+  ...ALL_MAPS.filter((m) => list.includes(m)),
+  ...list.filter((m) => !ALL_MAPS.includes(m)),
 ];
 
 const FORMATS = {
@@ -49,306 +75,567 @@ const FORMATS = {
   ],
 };
 
-const encodeState = (state) =>
-  btoa(unescape(encodeURIComponent(JSON.stringify(state))));
+const FORMAT_LABELS = { BO1: "BO1", BO3: "BO3", BO5: "BO5 Grand Final" };
 
-const decodeState = (str) =>
-  JSON.parse(decodeURIComponent(escape(atob(str))));
+// Kartat, jotka formaatti kuluttaa (ban + pick) + yksi decider
+const requiredPool = (format) =>
+  FORMATS[format].filter((a) => a.includes("ban") || a.includes("pick"))
+    .length + 1;
+
+/* ---------- URL-tilan koodaus (URL-turvallinen base64) ---------- */
+
+const encodeState = (state) => {
+  const bytes = new TextEncoder().encode(JSON.stringify(state));
+  let bin = "";
+  bytes.forEach((b) => (bin += String.fromCharCode(b)));
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
+
+const decodeState = (str) => {
+  let b64 = str.replace(/-/g, "+").replace(/_/g, "/").replace(/ /g, "+");
+  while (b64.length % 4) b64 += "=";
+  const bin = atob(b64);
+  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
+};
+
+/* ---------- Apufunktiot ---------- */
+
+const kindOf = (action) => {
+  if (!action) return "done";
+  if (action.includes("ban")) return "ban";
+  if (action.includes("pick")) return "pick";
+  if (action.includes("side")) return "side";
+  return "decider";
+};
+
+const KIND_LABELS = {
+  ban: "Ban",
+  pick: "Pick",
+  side: "Pick side",
+  decider: "Decider",
+  done: "Done",
+};
+
+const getActor = (action, s) => {
+  if (!action) return null;
+  if (action.startsWith("UB")) return s.upperBracket === "A" ? s.teamA : s.teamB;
+  if (action.startsWith("A")) return s.teamA;
+  if (action.startsWith("B")) return s.teamB;
+  return null;
+};
+
+const snapshot = (s) => ({
+  remaining: s.remaining,
+  picked: s.picked,
+  log: s.log,
+  step: s.step,
+});
+
+// Jos seuraava vaihe on decider ja jäljellä on yksi kartta, ratkaistaan se
+// samassa tilasiirtymässä -> undo palauttaa kerralla oikeaan kohtaan.
+const settle = (s) => {
+  const action = FORMATS[s.format][s.step];
+  if (action === "decider" && s.remaining.length === 1) {
+    const map = s.remaining[0];
+    return {
+      ...s,
+      remaining: [],
+      picked: [...s.picked, { map, side: null, sideBy: null }],
+      log: [...s.log, `Decider map: ${map} (left over)`],
+      step: s.step + 1,
+    };
+  }
+  return s;
+};
+
+/* ---------- Reducer ---------- */
+
+const initialState = () => ({
+  teamA: "Team A",
+  teamB: "Team B",
+  upperBracket: "A", // "A" tai "B"
+  format: "BO1",
+  maps: COMP_POOL,
+  remaining: COMP_POOL,
+  picked: [],
+  log: [],
+  step: 0,
+  history: [],
+});
+
+const freshVeto = (s) => ({
+  ...s,
+  remaining: s.maps,
+  picked: [],
+  log: [],
+  step: 0,
+  history: [],
+});
+
+function reducer(s, a) {
+  const action = FORMATS[s.format][s.step];
+  const kind = kindOf(action);
+
+  switch (a.type) {
+    case "SET_FIELD":
+      return { ...s, [a.key]: a.value };
+
+    case "SET_FORMAT":
+      return freshVeto({ ...s, format: a.format });
+
+    case "VETO_MAP": {
+      if (kind !== "ban" && kind !== "pick") return s;
+      if (s.maps.length !== requiredPool(s.format)) return s;
+      if (!s.remaining.includes(a.map)) return s;
+
+      const verb = kind === "ban" ? "banned" : "picked";
+      return settle({
+        ...s,
+        history: [...s.history, snapshot(s)],
+        remaining: s.remaining.filter((m) => m !== a.map),
+        picked:
+          kind === "pick"
+            ? [...s.picked, { map: a.map, side: null, sideBy: null }]
+            : s.picked,
+        log: [...s.log, `${getActor(action, s)} ${verb} ${a.map}`],
+        step: s.step + 1,
+      });
+    }
+
+    case "PICK_SIDE": {
+      if (kind !== "side") return s;
+      const last = s.picked[s.picked.length - 1];
+      if (!last) return s;
+
+      const actor = getActor(action, s);
+      return settle({
+        ...s,
+        history: [...s.history, snapshot(s)],
+        picked: [...s.picked.slice(0, -1), { ...last, side: a.side, sideBy: actor }],
+        log: [...s.log, `${actor} picked ${a.side} side on ${last.map}`],
+        step: s.step + 1,
+      });
+    }
+
+    case "UNDO": {
+      if (s.history.length === 0) return s;
+      const prev = s.history[s.history.length - 1];
+      return { ...s, ...prev, history: s.history.slice(0, -1) };
+    }
+
+    case "RESET":
+      return freshVeto(s);
+
+    // Poolia voi muokata vain ennen vedon alkua
+    case "TOGGLE_MAP": {
+      if (s.step !== 0) return s;
+      const maps = s.maps.includes(a.map)
+        ? s.maps.filter((m) => m !== a.map)
+        : normalizePool([...s.maps, a.map]);
+      return { ...s, maps, remaining: maps };
+    }
+
+    case "SET_POOL": {
+      if (s.step !== 0) return s;
+      return { ...s, maps: a.maps, remaining: a.maps };
+    }
+
+    case "ADD_MAP": {
+      if (s.step !== 0) return s;
+      const typed = a.name.trim();
+      if (!typed) return s;
+      // Jos nimi vastaa tunnettua karttaa, käytetään sen oikeaa kirjoitusasua
+      const name =
+        ALL_MAPS.find((m) => m.toLowerCase() === typed.toLowerCase()) ?? typed;
+      if (s.maps.some((m) => m.toLowerCase() === name.toLowerCase())) return s;
+      const maps = normalizePool([...s.maps, name]);
+      return { ...s, maps, remaining: maps };
+    }
+
+    default:
+      return s;
+  }
+}
+
+// Lukee tilan URL:sta (vanhat linkit, joissa upperBracket oli joukkueen nimi, toimivat edelleen)
+function init() {
+  const base = initialState();
+  try {
+    const encoded = new URLSearchParams(window.location.search).get("state");
+    if (!encoded) return base;
+
+    const d = decodeState(encoded);
+    const valid =
+      FORMATS[d.format] &&
+      Array.isArray(d.maps) &&
+      Array.isArray(d.remaining) &&
+      Array.isArray(d.picked) &&
+      Array.isArray(d.log) &&
+      Number.isInteger(d.step);
+    if (!valid) return base;
+
+    const upperBracket =
+      d.upperBracket === "A" || d.upperBracket === "B"
+        ? d.upperBracket
+        : d.upperBracket === d.teamB
+          ? "B"
+          : "A";
+
+    return {
+      ...base,
+      teamA: d.teamA ?? base.teamA,
+      teamB: d.teamB ?? base.teamB,
+      upperBracket,
+      format: d.format,
+      maps: d.maps,
+      remaining: d.remaining,
+      picked: d.picked,
+      log: d.log,
+      step: d.step,
+    };
+  } catch {
+    console.error("Invalid URL state");
+    return base;
+  }
+}
+
+/* ---------- Tyylit ---------- */
+
+const btn =
+  "rounded border border-[#3a4a5a] bg-[#1b2733] px-3 py-2 text-sm font-medium text-[#ece8e1] transition hover:border-[#ff4655] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-[#3a4a5a]";
+const input =
+  "rounded border border-[#3a4a5a] bg-[#1b2733] px-3 py-2 text-[#ece8e1] outline-none focus:border-[#ff4655] disabled:opacity-50";
+
+/* ---------- Komponentti ---------- */
 
 export default function ValorantVetoTool() {
-  const [teamA, setTeamA] = useState("Team A");
-  const [teamB, setTeamB] = useState("Team B");
-  const [upperBracket, setUpperBracket] = useState("Team A");
+  const [state, dispatch] = useReducer(reducer, null, init);
+  const [newMap, setNewMap] = useState("");
+  const [copied, setCopied] = useState("");
 
-  const [maps, setMaps] = useState(DEFAULT_MAPS);
-  const [remaining, setRemaining] = useState(DEFAULT_MAPS);
-  const [picked, setPicked] = useState([]);
-  const [log, setLog] = useState([]);
+  const { teamA, teamB, upperBracket, format, maps, remaining, picked, log, step, history } =
+    state;
 
-  const [format, setFormat] = useState("BO1");
-  const [step, setStep] = useState(0);
-  const [history, setHistory] = useState([]);
-  const [hydrated, setHydrated] = useState(false);
+  const action = FORMATS[format][step];
+  const kind = kindOf(action);
+  const actor = getActor(action, state);
+  const needed = requiredPool(format);
+  const poolValid = maps.length === needed;
+  const started = step > 0;
+  const lastPicked = picked[picked.length - 1];
 
-  const currentAction = FORMATS[format][step];
-
-  const buildState = () => ({
-    teamA,
-    teamB,
-    upperBracket,
-    maps,
-    remaining,
-    picked,
-    log,
-    format,
-    step,
-  });
-
+  // Tila URL:iin (history jätetään pois, jotta linkki pysyy lyhyenä)
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const encoded = params.get("state");
+    const { history: _history, ...persist } = state;
+    window.history.replaceState(null, "", `?state=${encodeState(persist)}`);
+  }, [state]);
 
-    if (!encoded) {
-      setHydrated(true);
-      return;
-    }
+  const statusOf = (map) => {
+    const idx = picked.findIndex((p) => p.map === map);
+    if (idx >= 0) return { type: "picked", order: idx + 1 };
+    if (remaining.includes(map)) return { type: "available" };
+    return { type: "banned" };
+  };
 
+  const copyText = async (text, label) => {
     try {
-      const decoded = decodeState(encoded);
-      setTeamA(decoded.teamA);
-      setTeamB(decoded.teamB);
-      setUpperBracket(decoded.upperBracket);
-      setMaps(decoded.maps);
-      setRemaining(decoded.remaining);
-      setPicked(decoded.picked);
-      setLog(decoded.log);
-      setFormat(decoded.format);
-      setStep(decoded.step);
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+      setTimeout(() => setCopied(""), 1500);
     } catch {
-      console.error("Invalid URL state");
-    } finally {
-      setHydrated(true);
+      console.error("Clipboard not available");
     }
-  }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    const encoded = encodeState(buildState());
-    window.history.replaceState(null, "", `?state=${encoded}`);
-  }, [
-    hydrated,
-    teamA,
-    teamB,
-    upperBracket,
-    maps,
-    remaining,
-    picked,
-    log,
-    format,
-    step,
-  ]);
-
-  const getActor = () => {
-    if (!currentAction) return null;
-    if (currentAction.startsWith("A")) return teamA;
-    if (currentAction.startsWith("B")) return teamB;
-    if (currentAction === "UB_ban") return upperBracket;
-    return null;
   };
 
-  const getActionLabel = () => {
-    if (!currentAction) return "Done";
-    if (currentAction.includes("ban")) return "Ban";
-    if (currentAction.includes("pick")) return "Pick";
-    if (currentAction.includes("side")) return "Pick Side";
-    if (currentAction === "decider") return "Decider";
-  };
+  const resultsText =
+    `${teamA} vs ${teamB} (${format})\n` +
+    picked
+      .map(
+        (p, i) =>
+          `Map ${i + 1}: ${p.map}${p.side ? ` (Side: ${p.side} by ${p.sideBy})` : ""}`
+      )
+      .join("\n");
 
-  const getActionVerb = () => {
-    if (!currentAction) return "";
-    if (currentAction.includes("ban")) return "banned";
-    if (currentAction.includes("pick")) return "picked";
-    if (currentAction.includes("side")) return "picked side";
-    if (currentAction === "decider") return "decider";
-  };
-
-  const saveHistory = () => {
-    setHistory((h) => [...h, { remaining, picked, log, step }]);
-  };
-
-  const handleMapClick = (map) => {
-    if (!currentAction) return;
-    if (currentAction.includes("side")) return;
-    if (currentAction === "decider") return;
-
-    saveHistory();
-
-    const newRemaining = remaining.filter((m) => m !== map);
-    const newPicked = [...picked];
-
-    if (currentAction.includes("pick")) {
-      newPicked.push({ map, side: null, sideBy: null });
-    }
-
-    setRemaining(newRemaining);
-    setPicked(newPicked);
-    setLog([...log, `${getActor()} ${getActionVerb()} ${map}`]);
-    setStep(step + 1);
-  };
-
-  const handleSidePick = (side) => {
-    saveHistory();
-
-    const newPicked = [...picked];
-    const last = newPicked[newPicked.length - 1];
-
-    newPicked[newPicked.length - 1] = {
-      ...last,
-      side,
-      sideBy: getActor(),
-    };
-
-    setPicked(newPicked);
-    setLog([...log, `${getActor()} picked ${side} side on ${last.map}`]);
-    setStep(step + 1);
-  };
-
-  useEffect(() => {
-    if (!hydrated) return;
-
-    if (currentAction === "decider" && remaining.length === 1) {
-      saveHistory();
-
-      const map = remaining[0];
-      setPicked([...picked, { map, side: null, sideBy: null }]);
-      setRemaining([]);
-      setLog([...log, `Decider map: ${map} (left over)`]);
-      setStep(step + 1);
-    }
-  }, [hydrated, currentAction, remaining]);
-
-  const undo = () => {
-    if (history.length === 0) return;
-    const last = history[history.length - 1];
-    setRemaining(last.remaining);
-    setPicked(last.picked);
-    setLog(last.log);
-    setStep(last.step);
-    setHistory(history.slice(0, -1));
-  };
-
-  const reset = () => {
-    setRemaining(maps);
-    setPicked([]);
-    setLog([]);
-    setStep(0);
-    setHistory([]);
-  };
-
-  const addMap = (name) => {
-    if (!name.trim()) return;
-    if (maps.includes(name)) return;
-
-    const newPool = [...maps, name];
-    setMaps(newPool);
-    setRemaining(newPool);
+  const submitMap = () => {
+    dispatch({ type: "ADD_MAP", name: newMap });
+    setNewMap("");
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-4">
-      <h1 className="text-2xl font-bold">Valorant Tournament Veto Tool</h1>
+    <div className="min-h-screen bg-[#0f1923] text-[#ece8e1]">
+      <div className="mx-auto max-w-4xl space-y-5 p-6">
+        <h1 className="text-3xl font-bold tracking-tight">
+          Valorant tournament veto tool
+        </h1>
 
-      <div className="grid grid-cols-2 gap-2">
-        <input
-          value={teamA}
-          onChange={(e) => setTeamA(e.target.value)}
-          className="border p-2 rounded"
-        />
-        <input
-          value={teamB}
-          onChange={(e) => setTeamB(e.target.value)}
-          className="border p-2 rounded"
-        />
-      </div>
+        {/* Joukkueet */}
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <input
+            aria-label="Team A name"
+            value={teamA}
+            disabled={started}
+            onChange={(e) =>
+              dispatch({ type: "SET_FIELD", key: "teamA", value: e.target.value })
+            }
+            className={input}
+          />
+          <input
+            aria-label="Team B name"
+            value={teamB}
+            disabled={started}
+            onChange={(e) =>
+              dispatch({ type: "SET_FIELD", key: "teamB", value: e.target.value })
+            }
+            className={input}
+          />
+        </div>
 
-      <div className="flex gap-2">
-        <select
-          value={format}
-          onChange={(e) => reset() || setFormat(e.target.value)}
-          className="border p-2 rounded"
-        >
-          <option value="BO1">BO1</option>
-          <option value="BO3">BO3</option>
-          <option value="BO5">BO5 Grand Final</option>
-        </select>
-
-        {format === "BO5" && (
+        {/* Asetukset */}
+        <div className="flex flex-wrap gap-2">
           <select
-            value={upperBracket}
-            onChange={(e) => setUpperBracket(e.target.value)}
-            className="border p-2 rounded"
+            aria-label="Series format"
+            value={format}
+            onChange={(e) => dispatch({ type: "SET_FORMAT", format: e.target.value })}
+            className={input}
           >
-            <option>{teamA}</option>
-            <option>{teamB}</option>
+            {Object.keys(FORMATS).map((f) => (
+              <option key={f} value={f}>
+                {FORMAT_LABELS[f]}
+              </option>
+            ))}
           </select>
-        )}
 
-        <button onClick={undo} className="border px-3 rounded">
-          Undo
-        </button>
-      </div>
+          {format === "BO5" && (
+            <select
+              aria-label="Upper bracket team"
+              value={upperBracket}
+              disabled={started}
+              onChange={(e) =>
+                dispatch({ type: "SET_FIELD", key: "upperBracket", value: e.target.value })
+              }
+              className={input}
+            >
+              <option value="A">{teamA} (upper bracket)</option>
+              <option value="B">{teamB} (upper bracket)</option>
+            </select>
+          )}
 
-      <div className="font-semibold">
-        Current: {getActor() || "Complete"} - {getActionLabel()}
-      </div>
-
-      {currentAction?.includes("side") && (
-        <div className="flex gap-2">
           <button
-            onClick={() => handleSidePick("Attack")}
-            className="border p-2 rounded"
+            onClick={() => dispatch({ type: "UNDO" })}
+            disabled={history.length === 0}
+            className={btn}
           >
-            Attack
-          </button>
-          <button
-            onClick={() => handleSidePick("Defense")}
-            className="border p-2 rounded"
-          >
-            Defense
+            Undo
           </button>
         </div>
-      )}
 
-      {!currentAction?.includes("side") &&
-        currentAction !== "decider" && (
-          <div className="grid grid-cols-3 gap-2">
-            {remaining.map((map) => (
-              <button
-                key={map}
-                onClick={() => handleMapClick(map)}
-                className="border p-2 rounded"
-              >
-                {map}
-              </button>
-            ))}
+        {/* Pooli ei täsmää formaattiin */}
+        {!poolValid && (
+          <div
+            role="alert"
+            className="rounded border border-[#ff4655] bg-[#ff4655]/10 p-3 text-sm"
+          >
+            {format} needs a map pool of exactly {needed} maps. The pool has{" "}
+            {maps.length}; {maps.length < needed ? "add" : "remove"}{" "}
+            {Math.abs(needed - maps.length)} to start the veto.
           </div>
         )}
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <h2 className="font-semibold">Final Series Order</h2>
-          {picked.map((p, i) => (
-            <div key={i}>
-              Map {i + 1}: {p.map}{" "}
-              {p.side && `(Side: ${p.side} by ${p.sideBy})`}
-            </div>
-          ))}
+        {/* Vuoro */}
+        <div className="rounded border border-[#3a4a5a] bg-[#1b2733] p-3 font-semibold">
+          {kind === "done" ? (
+            "Veto complete"
+          ) : (
+            <>
+              Current: <span className="text-[#ff4655]">{actor}</span> –{" "}
+              {KIND_LABELS[kind]}
+              {kind === "side" && lastPicked && ` on ${lastPicked.map}`}
+            </>
+          )}
         </div>
 
-        <div>
-          <h2 className="font-semibold">Veto Log</h2>
-          {log.map((l, i) => (
-            <div key={i}>{l}</div>
-          ))}
+        {/* Puolen valinta */}
+        {kind === "side" && (
+          <div className="flex gap-2">
+            <button
+              onClick={() => dispatch({ type: "PICK_SIDE", side: "Attack" })}
+              className={btn}
+            >
+              Attack
+            </button>
+            <button
+              onClick={() => dispatch({ type: "PICK_SIDE", side: "Defense" })}
+              className={btn}
+            >
+              Defense
+            </button>
+          </div>
+        )}
+
+        {/* Karttapooli: bannatut himmeinä, valitut korostettuina */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {maps.map((map) => {
+            const status = statusOf(map);
+            const clickable =
+              status.type === "available" &&
+              poolValid &&
+              (kind === "ban" || kind === "pick");
+
+            const style =
+              status.type === "picked"
+                ? "border-[#ff4655] bg-[#ff4655]/15"
+                : status.type === "banned"
+                  ? "border-[#2a3642] bg-transparent text-[#6b7a88] line-through"
+                  : "border-[#3a4a5a] bg-[#1b2733] hover:border-[#ff4655]";
+
+            return (
+              <button
+                key={map}
+                disabled={!clickable}
+                onClick={() => dispatch({ type: "VETO_MAP", map })}
+                className={`rounded border p-3 text-left font-medium transition disabled:cursor-default ${style}`}
+              >
+                {map}
+                {status.type === "picked" && (
+                  <span className="ml-2 text-sm font-normal text-[#ff4655]">
+                    Map {status.order}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
-      </div>
 
-      <button
-        onClick={reset}
-        className="bg-black text-white px-4 py-2 rounded"
-      >
-        Reset
-      </button>
+        {/* Tulokset */}
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+          <div>
+            <h2 className="mb-1 font-semibold">Final series order</h2>
+            {picked.length === 0 && (
+              <p className="text-sm text-[#6b7a88]">No maps picked yet.</p>
+            )}
+            {picked.map((p, i) => (
+              <div key={i}>
+                Map {i + 1}: {p.map}{" "}
+                {p.side && (
+                  <span className="text-[#9fb0c0]">
+                    (Side: {p.side} by {p.sideBy})
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
 
-      <div className="pt-4">
-        <h2 className="font-semibold">Custom Map Pool</h2>
-        <input
-          placeholder="Add map name"
-          className="border p-2 rounded"
-          onKeyDown={(e) =>
-            e.key === "Enter" && addMap(e.target.value)
-          }
-        />
+          <div>
+            <h2 className="mb-1 font-semibold">Veto log</h2>
+            {log.length === 0 && (
+              <p className="text-sm text-[#6b7a88]">Nothing has happened yet.</p>
+            )}
+            {log.map((l, i) => (
+              <div key={i}>{l}</div>
+            ))}
+          </div>
+        </div>
+
+        {/* Toiminnot */}
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => dispatch({ type: "RESET" })}
+            className="rounded bg-[#ff4655] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#e03a48]"
+          >
+            Reset
+          </button>
+          <button
+            onClick={() => copyText(window.location.href, "link")}
+            className={btn}
+          >
+            {copied === "link" ? "Link copied" : "Copy link"}
+          </button>
+          <button
+            onClick={() => copyText(resultsText, "results")}
+            disabled={picked.length === 0}
+            className={btn}
+          >
+            {copied === "results" ? "Results copied" : "Copy results"}
+          </button>
+        </div>
+
+        {/* Oma karttapooli */}
+        <div className="space-y-2 border-t border-[#2a3642] pt-4">
+          <h2 className="font-semibold">
+            Map pool{" "}
+            <span className="font-normal text-[#9fb0c0]">
+              ({maps.length} selected, {format} needs {needed})
+            </span>
+          </h2>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => dispatch({ type: "SET_POOL", maps: COMP_POOL })}
+              disabled={started}
+              className={btn}
+            >
+              Competitive pool
+            </button>
+            <button
+              onClick={() => dispatch({ type: "SET_POOL", maps: ALL_MAPS })}
+              disabled={started}
+              className={btn}
+            >
+              Select all
+            </button>
+            <button
+              onClick={() => dispatch({ type: "SET_POOL", maps: [] })}
+              disabled={started}
+              className={btn}
+            >
+              Clear
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {[...ALL_MAPS, ...maps.filter((m) => !ALL_MAPS.includes(m))].map(
+              (m) => {
+                const on = maps.includes(m);
+                return (
+                  <button
+                    key={m}
+                    aria-pressed={on}
+                    disabled={started}
+                    onClick={() => dispatch({ type: "TOGGLE_MAP", map: m })}
+                    className={`rounded border px-3 py-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                      on
+                        ? "border-[#ff4655] bg-[#ff4655]/15"
+                        : "border-[#3a4a5a] text-[#9fb0c0] hover:border-[#ff4655]"
+                    }`}
+                  >
+                    {m}
+                  </button>
+                );
+              }
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <input
+              value={newMap}
+              disabled={started}
+              placeholder="Add custom map"
+              onChange={(e) => setNewMap(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submitMap()}
+              className={input}
+            />
+            <button onClick={submitMap} disabled={started} className={btn}>
+              Add map
+            </button>
+          </div>
+
+          {started && (
+            <p className="text-sm text-[#6b7a88]">
+              The pool and team names can be changed after Reset.
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
