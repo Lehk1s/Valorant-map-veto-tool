@@ -307,6 +307,75 @@ const btn =
 const input =
   "rounded border border-[#3a4a5a] bg-[#1b2733] px-3 py-2 text-[#ece8e1] outline-none focus:border-[#ff4655] disabled:opacity-50";
 
+/* ---------- Karttakortti ---------- */
+
+// Kuvat: public/maps/<kartan nimi pienillä kirjaimilla>.jpg (esim. public/maps/abyss.jpg)
+const IMAGE_EXT = "webp";
+const mapImage = (map) =>
+  `${import.meta.env.BASE_URL}maps/${map.toLowerCase()}.${IMAGE_EXT}`;
+
+function MapCard({ map, status, clickable, onClick }) {
+  // Jos kuvaa ei löydy (esim. oma kartta), näytetään pelkkä tekstikortti
+  const [imgOk, setImgOk] = useState(true);
+  const picked = status.type === "picked";
+  const banned = status.type === "banned";
+
+  const border = picked
+    ? "border-[#ff4655]"
+    : banned
+      ? "border-[#2a3642]"
+      : clickable
+        ? "border-[#3a4a5a] hover:border-[#ff4655]"
+        : "border-[#3a4a5a]";
+
+  return (
+    <button
+      disabled={!clickable}
+      onClick={onClick}
+      className={`group relative aspect-video w-full overflow-hidden rounded-lg border-2 bg-[#1b2733] transition disabled:cursor-default ${border}`}
+    >
+      {imgOk && (
+        <img
+          src={mapImage(map)}
+          alt=""
+          loading="lazy"
+          onError={() => setImgOk(false)}
+          className={`absolute inset-0 h-full w-full object-cover transition ${
+            banned ? "opacity-40 grayscale" : ""
+          }`}
+        />
+      )}
+
+      {/* Tummennus, jotta teksti pysyy luettavana kuvan päällä */}
+      <div
+        className={`absolute inset-0 transition ${
+          imgOk ? "bg-black/45" : ""
+        } ${clickable ? "group-hover:bg-black/25" : ""}`}
+      />
+
+      {/* Kartan nimi keskellä kuvan päällä */}
+      <span
+        className={`relative flex h-full items-center justify-center px-2 text-lg font-bold tracking-wide drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)] ${
+          banned ? "text-[#9fb0c0] line-through" : "text-white"
+        }`}
+      >
+        {map}
+      </span>
+
+      {picked && (
+        <span className="absolute left-2 top-2 rounded bg-[#ff4655] px-2 py-0.5 text-xs font-semibold text-white">
+          Map {status.order}
+        </span>
+      )}
+      {banned && (
+        <span className="absolute right-2 top-2 rounded bg-black/60 px-2 py-0.5 text-xs text-[#9fb0c0]">
+          Banned
+        </span>
+      )}
+    </button>
+  );
+}
+
 /* ---------- Komponentti ---------- */
 
 export default function ValorantVetoTool() {
@@ -474,7 +543,7 @@ export default function ValorantVetoTool() {
         )}
 
         {/* Karttapooli: bannatut himmeinä, valitut korostettuina */}
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {maps.map((map) => {
             const status = statusOf(map);
             const clickable =
@@ -482,27 +551,14 @@ export default function ValorantVetoTool() {
               poolValid &&
               (kind === "ban" || kind === "pick");
 
-            const style =
-              status.type === "picked"
-                ? "border-[#ff4655] bg-[#ff4655]/15"
-                : status.type === "banned"
-                  ? "border-[#2a3642] bg-transparent text-[#6b7a88] line-through"
-                  : "border-[#3a4a5a] bg-[#1b2733] hover:border-[#ff4655]";
-
             return (
-              <button
+              <MapCard
                 key={map}
-                disabled={!clickable}
+                map={map}
+                status={status}
+                clickable={clickable}
                 onClick={() => dispatch({ type: "VETO_MAP", map })}
-                className={`rounded border p-3 text-left font-medium transition disabled:cursor-default ${style}`}
-              >
-                {map}
-                {status.type === "picked" && (
-                  <span className="ml-2 text-sm font-normal text-[#ff4655]">
-                    Map {status.order}
-                  </span>
-                )}
-              </button>
+              />
             );
           })}
         </div>
