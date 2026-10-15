@@ -16,7 +16,7 @@ Perfect for tournament organizers, casters, and observers.
 * Full map list with individual map selection
 * Preset map pools (competitive pool, all maps) and custom maps
 * Map pool validation per format (exactly 7 maps)
-* Banned and picked maps shown visually
+* Map images on cards, with banned and picked maps shown visually
 * Veto log and final series order display
 * Shareable URL (full veto state in link)
 * Copy link and copy results buttons
@@ -62,7 +62,7 @@ React, Vite, Tailwind CSS
 ## Future Roadmap
 
 * Spectator / OBS overlay mode
-* Export veto log (text / PNG)
+* Discord-formatted results export (text / PNG)
+* Turn timer with auto-pick
 * Coin toss / seed logic
-* Map images
 * Live sync for remote teams
