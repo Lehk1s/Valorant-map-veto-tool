@@ -1,7 +1,7 @@
 # Valorant Map Veto Tool
 
 A web-based tool for Valorant tournament map vetoes.
-Supports BO1, BO3, and BO5 formats with coin toss, auto-decider, side picks, and full veto logs.
+Supports BO1, BO3, BO5, and BO5 Grand Final formats with coin toss, auto-decider, side picks, and full veto logs.
 
 Perfect for tournament organizers, casters, and observers.
 
@@ -9,13 +9,14 @@ Perfect for tournament organizers, casters, and observers.
 
 ## Features
 
-* BO1, BO3, and BO5 map selection formats
-* Coin toss to decide veto order (or manual seed order)
+* BO1, BO3, BO5, and BO5 Grand Final map selection formats, following the VCT veto procedures
+* Coin toss to decide Team A (toss assigns Team A, or winner chooses veto order)
+* Upper bracket selection for Grand Finals
 * Auto-decider for last remaining map
 * Side pick tracking
 * Undo last action
 * Full map list with individual map selection
-* Preset map pools (competitive pool, all maps) and custom maps
+* Preset map pools (current competitive pool, all maps) and custom maps
 * Map pool validation per format (exactly 7 maps)
 * Map images on cards, with banned and picked maps shown visually
 * Veto log and final series order display
@@ -43,23 +44,29 @@ Open your browser at http://localhost:5173 (or the URL shown in the terminal).
 ## Usage
 
 1. Enter team names (optional, defaults to Team A and Team B).
-   Team A vetoes first: the higher seed, or the team chosen by the coin toss.
-2. Optionally flip the coin. The winner chooses to veto first or second.
-   Use Swap A / B to change the order manually.
-3. Select format (BO1, BO3, BO5 Grand Final).
+   Team A vetoes first: the higher seed, or the team decided by the coin toss.
+2. Select format (BO1, BO3, BO5, or BO5 Grand Final).
+3. Decide Team A and Team B:
+   * Coin toss: flip the coin. Depending on the mode, the toss either assigns Team A directly or the winner chooses to veto first or second.
+   * Seeding: skip the toss and use Swap A / B if the better seed should be Team A.
+   * Grand Final: the upper bracket team bans two maps and chooses whether it is Team A or Team B. Enter it in the matching field and select it as the upper bracket team. The coin toss is hidden in this format.
 4. Choose the map pool: use the competitive pool preset, select all maps, or pick maps one by one. The pool needs exactly 7 maps.
 5. Click maps to ban or pick, follow prompts for side selections.
 6. See the veto log and final series order update in real-time.
 7. Use Undo to revert the last action, or Reset to start over.
 8. Copy the link to share the current veto, or copy the results as text.
 
-The map pool and team names can only be changed before the veto starts.
+The map pool, team names, and coin toss can only be changed before the veto starts.
+
+### Current competitive pool
+
+Abyss, Bind, Corrode, Haven, Lotus, Summit, Sunset
 
 ---
 
 ## Map Images
 
-Map images are stored in public/maps/ as .webp files named after the map in lowercase (for example abyss.webp, ascent.webp). If an image is missing, the map is shown as a text-only card.
+Map images are stored in public/maps/ as .webp files named after the map in lowercase (for example abyss.webp, bind.webp). If an image is missing, the map is shown as a text-only card.
 
 ---
 
@@ -71,8 +78,10 @@ React, Vite, Tailwind CSS
 
 ## Future Roadmap
 
+* 60-second turn timer with randomized auto-pick
 * Spectator / OBS overlay mode
 * Live sync with roles (admin, team captains, spectators) for remote and LAN use
+* Admin tools for late or no-show teams (randomize choices)
+* Rules presets for different tournaments
 * Discord-formatted results export (text / PNG)
-* Turn timer with auto-pick
 * Support for other games

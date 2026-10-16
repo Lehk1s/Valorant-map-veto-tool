@@ -19,13 +19,13 @@ const ALL_MAPS = [
   "Sunset",
 ];
 
-// Nykyinen kilpailupooli
+// Nykyinen kilpailupooli (patch: Bind ja Corrode sisään, Ascent ja Split pois)
 const COMP_POOL = [
   "Abyss",
-  "Ascent",
+  "Bind",
+  "Corrode",
   "Haven",
   "Lotus",
-  "Split",
   "Summit",
   "Sunset",
 ];
@@ -59,7 +59,23 @@ const FORMATS = {
     "decider",
     "A_side",
   ],
+  // Tavallinen BO5 (sääntökirja 31)
   BO5: [
+    "A_ban",
+    "B_ban",
+    "A_pick",
+    "B_side",
+    "B_pick",
+    "A_side",
+    "A_pick",
+    "B_side",
+    "B_pick",
+    "A_side",
+    "decider",
+    "B_side",
+  ],
+  // Double Elimination Grand Final (sääntökirja 32): upper bracket -joukkue bannaa kaksi karttaa
+  BO5_GF: [
     "UB_ban",
     "UB_ban",
     "A_pick",
@@ -75,7 +91,12 @@ const FORMATS = {
   ],
 };
 
-const FORMAT_LABELS = { BO1: "BO1", BO3: "BO3", BO5: "BO5 Grand Final" };
+const FORMAT_LABELS = {
+  BO1: "BO1",
+  BO3: "BO3",
+  BO5: "BO5",
+  BO5_GF: "BO5 Grand Final",
+};
 
 // Kartat, jotka formaatti kuluttaa (ban + pick) + yksi decider
 const requiredPool = (format) =>
@@ -167,7 +188,9 @@ const initialState = () => ({
   teamA: "", // tyhjä -> näytetään oletusnimi "Team A" (placeholder)
   teamB: "",
   upperBracket: "A", // "A" tai "B"
-  toss: null, // { winnerSlot, winnerName, choice: null | "first" | "second", swapped }
+  // "assign": heitto arpoo, kumpi on Team A (VCT) | "choose": voittaja valitsee vetojärjestyksen
+  tossMode: "assign",
+  toss: null, // { winnerSlot, winnerName, choice: null | "first" | "second", swapped, auto? }
   format: "BO1",
   maps: COMP_POOL,
   remaining: COMP_POOL,
@@ -194,8 +217,14 @@ function reducer(s, a) {
     case "SET_FIELD":
       return { ...s, [a.key]: a.value };
 
-    case "SET_FORMAT":
-      return freshVeto({ ...s, format: a.format });
+    case "SET_FORMAT": {
+      // Grand Finalissa upper bracket -joukkue valitsee A/B, joten heitto perutaan
+      const base =
+        a.format === "BO5_GF" && s.toss
+          ? { ...(s.toss.swapped ? swapTeams(s) : s), toss: null }
+          : s;
+      return freshVeto({ ...base, format: a.format });
+    }
 
     case "SWAP_TEAMS":
       if (s.step !== 0 || s.toss) return s;
@@ -204,11 +233,30 @@ function reducer(s, a) {
     // Satunnainen voittaja annetaan actionissa, jotta reducer pysyy puhtaana
     case "COIN_TOSS": {
       if (s.step !== 0 || s.toss) return s;
+      const winnerName = displayName(s, a.winner);
+
+      // VCT-tila: heitto arpoo suoraan, kumpi joukkue on Team A
+      if (s.tossMode === "assign") {
+        const swap = a.winner === "B";
+        const base = swap ? swapTeams(s) : s;
+        return {
+          ...base,
+          toss: {
+            winnerSlot: a.winner,
+            winnerName,
+            choice: "first",
+            swapped: swap,
+            auto: true,
+          },
+        };
+      }
+
+      // Challengermode-tila: voittaja valitsee vetojärjestyksen
       return {
         ...s,
         toss: {
           winnerSlot: a.winner,
-          winnerName: displayName(s, a.winner),
+          winnerName,
           choice: null,
           swapped: false,
         },
@@ -314,8 +362,10 @@ function init() {
     if (!encoded) return base;
 
     const d = decodeState(encoded);
+    // Vanhoissa linkeissä (ilman v-kenttää) "BO5" tarkoitti Grand Finalia
+    const format = d.format === "BO5" && d.v !== 2 ? "BO5_GF" : d.format;
     const valid =
-      FORMATS[d.format] &&
+      FORMATS[format] &&
       Array.isArray(d.maps) &&
       Array.isArray(d.remaining) &&
       Array.isArray(d.picked) &&
@@ -345,9 +395,11 @@ function init() {
                   ? d.toss.choice
                   : null,
               swapped: !!d.toss.swapped,
+              auto: !!d.toss.auto,
             }
           : null,
-      format: d.format,
+      format,
+      tossMode: d.tossMode === "choose" ? "choose" : "assign",
       maps: d.maps,
       remaining: d.remaining,
       picked: d.picked,
@@ -369,7 +421,7 @@ const input =
 
 /* ---------- Karttakortti ---------- */
 
-// Kuvat: public/maps/<kartan nimi pienillä kirjaimilla>.jpg (esim. public/maps/abyss.jpg)
+// Kuvat: public/maps/<kartan nimi pienillä kirjaimilla>.webp (esim. public/maps/abyss.webp)
 const IMAGE_EXT = "webp";
 const mapImage = (map) =>
   `${import.meta.env.BASE_URL}maps/${map.toLowerCase()}.${IMAGE_EXT}`;
@@ -448,6 +500,7 @@ export default function ValorantVetoTool() {
     teamB,
     upperBracket,
     toss,
+    tossMode,
     format,
     maps,
     remaining,
@@ -473,7 +526,7 @@ export default function ValorantVetoTool() {
   // Tila URL:iin (history jätetään pois, jotta linkki pysyy lyhyenä)
   useEffect(() => {
     const { history: _history, ...persist } = state;
-    window.history.replaceState(null, "", `?state=${encodeState(persist)}`);
+    window.history.replaceState(null, "", `?state=${encodeState({ ...persist, v: 2 })}`);
   }, [state]);
 
   const statusOf = (map) => {
@@ -542,8 +595,16 @@ export default function ValorantVetoTool() {
           toss.
         </p>
 
+        {format === "BO5_GF" && (
+          <p className="text-sm text-[#6b7a88]">
+            In the Grand Final the upper bracket team bans two maps and chooses
+            whether it is Team A or Team B. Enter it in the matching field,
+            then select it as the upper bracket team above.
+          </p>
+        )}
+
         {/* Kolikonheitto */}
-        {(!started || toss?.choice) && (
+        {format !== "BO5_GF" && (!started || toss?.choice) && (
           <div className="space-y-2 rounded border border-[#3a4a5a] bg-[#1b2733] p-3">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-semibold">Coin toss</span>
@@ -567,6 +628,21 @@ export default function ValorantVetoTool() {
                   >
                     Swap A / B
                   </button>
+                  <select
+                    aria-label="Coin toss mode"
+                    value={tossMode}
+                    onChange={(e) =>
+                      dispatch({
+                        type: "SET_FIELD",
+                        key: "tossMode",
+                        value: e.target.value,
+                      })
+                    }
+                    className={input}
+                  >
+                    <option value="assign">Toss assigns Team A</option>
+                    <option value="choose">Winner chooses order</option>
+                  </select>
                 </>
               )}
             </div>
@@ -608,7 +684,9 @@ export default function ValorantVetoTool() {
                   <span className="font-semibold text-[#ff4655]">
                     {toss.winnerName}
                   </span>{" "}
-                  won the toss and vetoes {toss.choice}. {nameA} is Team A.
+                  {toss.auto
+                    ? "won the coin toss and is Team A."
+                    : `won the toss and vetoes ${toss.choice}. ${nameA} is Team A.`}
                 </p>
                 <button
                   onClick={() => dispatch({ type: "TOSS_RESET" })}
@@ -637,7 +715,7 @@ export default function ValorantVetoTool() {
             ))}
           </select>
 
-          {format === "BO5" && (
+          {format === "BO5_GF" && (
             <select
               aria-label="Upper bracket team"
               value={upperBracket}
@@ -647,8 +725,8 @@ export default function ValorantVetoTool() {
               }
               className={input}
             >
-              <option value="A">{nameA} (upper bracket)</option>
-              <option value="B">{nameB} (upper bracket)</option>
+              <option value="A">{nameA} (Team A) is upper bracket</option>
+              <option value="B">{nameB} (Team B) is upper bracket</option>
             </select>
           )}
 
