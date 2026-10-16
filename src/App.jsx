@@ -117,13 +117,25 @@ const KIND_LABELS = {
   done: "Done",
 };
 
+// Tyhjä kenttä -> oletusnimi "Team A" / "Team B"
+const displayName = (s, slot) =>
+  (slot === "A" ? s.teamA : s.teamB).trim() || `Team ${slot}`;
+
 const getActor = (action, s) => {
   if (!action) return null;
-  if (action.startsWith("UB")) return s.upperBracket === "A" ? s.teamA : s.teamB;
-  if (action.startsWith("A")) return s.teamA;
-  if (action.startsWith("B")) return s.teamB;
+  if (action.startsWith("UB")) return displayName(s, s.upperBracket);
+  if (action.startsWith("A")) return displayName(s, "A");
+  if (action.startsWith("B")) return displayName(s, "B");
   return null;
 };
+
+// Vaihtaa joukkueiden paikat (A vetoaa ensin). Upper bracket seuraa joukkuetta.
+const swapTeams = (s) => ({
+  ...s,
+  teamA: s.teamB,
+  teamB: s.teamA,
+  upperBracket: s.upperBracket === "A" ? "B" : "A",
+});
 
 const snapshot = (s) => ({
   remaining: s.remaining,
@@ -152,9 +164,10 @@ const settle = (s) => {
 /* ---------- Reducer ---------- */
 
 const initialState = () => ({
-  teamA: "Team A",
-  teamB: "Team B",
+  teamA: "", // tyhjä -> näytetään oletusnimi "Team A" (placeholder)
+  teamB: "",
   upperBracket: "A", // "A" tai "B"
+  toss: null, // { winnerSlot, winnerName, choice: null | "first" | "second", swapped }
   format: "BO1",
   maps: COMP_POOL,
   remaining: COMP_POOL,
@@ -184,7 +197,42 @@ function reducer(s, a) {
     case "SET_FORMAT":
       return freshVeto({ ...s, format: a.format });
 
+    case "SWAP_TEAMS":
+      if (s.step !== 0 || s.toss) return s;
+      return swapTeams(s);
+
+    // Satunnainen voittaja annetaan actionissa, jotta reducer pysyy puhtaana
+    case "COIN_TOSS": {
+      if (s.step !== 0 || s.toss) return s;
+      return {
+        ...s,
+        toss: {
+          winnerSlot: a.winner,
+          winnerName: displayName(s, a.winner),
+          choice: null,
+          swapped: false,
+        },
+      };
+    }
+
+    // Heiton voittaja valitsee, vetoaako ensin (= Team A) vai toisena (= Team B)
+    case "TOSS_CHOICE": {
+      if (!s.toss || s.toss.choice || s.step !== 0) return s;
+      const wantsFirst = a.choice === "first";
+      const winnerIsA = s.toss.winnerSlot === "A";
+      const needSwap = winnerIsA !== wantsFirst;
+      const base = needSwap ? swapTeams(s) : s;
+      return { ...base, toss: { ...s.toss, choice: a.choice, swapped: needSwap } };
+    }
+
+    case "TOSS_RESET": {
+      if (!s.toss || s.step !== 0) return s;
+      const base = s.toss.swapped ? swapTeams(s) : s;
+      return { ...base, toss: null };
+    }
+
     case "VETO_MAP": {
+      if (s.toss && !s.toss.choice) return s; // heitto kesken
       if (kind !== "ban" && kind !== "pick") return s;
       if (s.maps.length !== requiredPool(s.format)) return s;
       if (!s.remaining.includes(a.map)) return s;
@@ -284,9 +332,21 @@ function init() {
 
     return {
       ...base,
-      teamA: d.teamA ?? base.teamA,
-      teamB: d.teamB ?? base.teamB,
+      teamA: typeof d.teamA === "string" ? d.teamA : base.teamA,
+      teamB: typeof d.teamB === "string" ? d.teamB : base.teamB,
       upperBracket,
+      toss:
+        d.toss && typeof d.toss.winnerName === "string"
+          ? {
+              winnerSlot: d.toss.winnerSlot === "B" ? "B" : "A",
+              winnerName: d.toss.winnerName,
+              choice:
+                d.toss.choice === "first" || d.toss.choice === "second"
+                  ? d.toss.choice
+                  : null,
+              swapped: !!d.toss.swapped,
+            }
+          : null,
       format: d.format,
       maps: d.maps,
       remaining: d.remaining,
@@ -383,8 +443,24 @@ export default function ValorantVetoTool() {
   const [newMap, setNewMap] = useState("");
   const [copied, setCopied] = useState("");
 
-  const { teamA, teamB, upperBracket, format, maps, remaining, picked, log, step, history } =
-    state;
+  const {
+    teamA,
+    teamB,
+    upperBracket,
+    toss,
+    format,
+    maps,
+    remaining,
+    picked,
+    log,
+    step,
+    history,
+  } = state;
+
+  const nameA = displayName(state, "A");
+  const nameB = displayName(state, "B");
+  const tossPending = !!toss && !toss.choice;
+  const namesLocked = step > 0 || !!toss;
 
   const action = FORMATS[format][step];
   const kind = kindOf(action);
@@ -418,7 +494,7 @@ export default function ValorantVetoTool() {
   };
 
   const resultsText =
-    `${teamA} vs ${teamB} (${format})\n` +
+    `${nameA} vs ${nameB} (${format})\n` +
     picked
       .map(
         (p, i) =>
@@ -442,8 +518,9 @@ export default function ValorantVetoTool() {
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <input
             aria-label="Team A name"
+            placeholder="Team A"
             value={teamA}
-            disabled={started}
+            disabled={namesLocked}
             onChange={(e) =>
               dispatch({ type: "SET_FIELD", key: "teamA", value: e.target.value })
             }
@@ -451,14 +528,99 @@ export default function ValorantVetoTool() {
           />
           <input
             aria-label="Team B name"
+            placeholder="Team B"
             value={teamB}
-            disabled={started}
+            disabled={namesLocked}
             onChange={(e) =>
               dispatch({ type: "SET_FIELD", key: "teamB", value: e.target.value })
             }
             className={input}
           />
         </div>
+        <p className="-mt-3 text-sm text-[#6b7a88]">
+          Team A vetoes first: the higher seed, or the team chosen by the coin
+          toss.
+        </p>
+
+        {/* Kolikonheitto */}
+        {(!started || toss?.choice) && (
+          <div className="space-y-2 rounded border border-[#3a4a5a] bg-[#1b2733] p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold">Coin toss</span>
+
+              {!toss && !started && (
+                <>
+                  <button
+                    onClick={() =>
+                      dispatch({
+                        type: "COIN_TOSS",
+                        winner: Math.random() < 0.5 ? "A" : "B",
+                      })
+                    }
+                    className={btn}
+                  >
+                    Flip coin
+                  </button>
+                  <button
+                    onClick={() => dispatch({ type: "SWAP_TEAMS" })}
+                    className={btn}
+                  >
+                    Swap A / B
+                  </button>
+                </>
+              )}
+            </div>
+
+            {!toss && !started && (
+              <p className="text-sm text-[#6b7a88]">
+                Optional. Without a toss, {nameA} (Team A) vetoes first.
+              </p>
+            )}
+
+            {tossPending && (
+              <div className="space-y-2">
+                <p>
+                  <span className="font-semibold text-[#ff4655]">
+                    {toss.winnerName}
+                  </span>{" "}
+                  won the coin toss. Choose the veto order:
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => dispatch({ type: "TOSS_CHOICE", choice: "first" })}
+                    className={btn}
+                  >
+                    Veto first
+                  </button>
+                  <button
+                    onClick={() => dispatch({ type: "TOSS_CHOICE", choice: "second" })}
+                    className={btn}
+                  >
+                    Veto second
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {toss?.choice && (
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm">
+                  <span className="font-semibold text-[#ff4655]">
+                    {toss.winnerName}
+                  </span>{" "}
+                  won the toss and vetoes {toss.choice}. {nameA} is Team A.
+                </p>
+                <button
+                  onClick={() => dispatch({ type: "TOSS_RESET" })}
+                  disabled={started}
+                  className={btn}
+                >
+                  Redo toss
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Asetukset */}
         <div className="flex flex-wrap gap-2">
@@ -485,8 +647,8 @@ export default function ValorantVetoTool() {
               }
               className={input}
             >
-              <option value="A">{teamA} (upper bracket)</option>
-              <option value="B">{teamB} (upper bracket)</option>
+              <option value="A">{nameA} (upper bracket)</option>
+              <option value="B">{nameB} (upper bracket)</option>
             </select>
           )}
 
@@ -549,6 +711,7 @@ export default function ValorantVetoTool() {
             const clickable =
               status.type === "available" &&
               poolValid &&
+              !tossPending &&
               (kind === "ban" || kind === "pick");
 
             return (
