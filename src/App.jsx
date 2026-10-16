@@ -590,13 +590,15 @@ export default function ValorantVetoTool() {
             className={input}
           />
         </div>
-        <p className="-mt-3 text-sm text-[#6b7a88]">
-          Team A vetoes first: the higher seed, or the team chosen by the coin
-          toss.
-        </p>
+        {format !== "BO5_GF" && (
+          <p className="-mt-3 text-sm text-[#6b7a88]">
+            Team A vetoes first: the higher seed, or the team chosen by the
+            coin toss.
+          </p>
+        )}
 
         {format === "BO5_GF" && (
-          <p className="text-sm text-[#6b7a88]">
+          <p className="-mt-3 text-sm text-[#6b7a88]">
             In the Grand Final the upper bracket team bans two maps and chooses
             whether it is Team A or Team B. Enter it in the matching field,
             then select it as the upper bracket team above.
