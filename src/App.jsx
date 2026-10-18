@@ -150,12 +150,22 @@ const getActor = (action, s) => {
   return null;
 };
 
+// Kumman paikan (A/B) vuoro on
+const getSlot = (action, s) => {
+  if (!action) return null;
+  if (action.startsWith("UB")) return s.upperBracket;
+  if (action.startsWith("A")) return "A";
+  if (action.startsWith("B")) return "B";
+  return null;
+};
+
 // Vaihtaa joukkueiden paikat (A vetoaa ensin). Upper bracket seuraa joukkuetta.
 const swapTeams = (s) => ({
   ...s,
   teamA: s.teamB,
   teamB: s.teamA,
   upperBracket: s.upperBracket === "A" ? "B" : "A",
+  absent: { A: s.absent.B, B: s.absent.A },
 });
 
 const snapshot = (s) => ({
@@ -199,11 +209,10 @@ const withDeadline = (s, now) => {
 };
 
 // Kartan ban/pick (myös ajastimen satunnaisvalinta, auto = true)
-const applyMap = (s, map, now, auto) => {
+const applyMap = (s, map, now, note = "") => {
   const action = FORMATS[s.format][s.step];
   const kind = kindOf(action);
   const verb = kind === "ban" ? "banned" : "picked";
-  const note = auto ? " (random, time ran out)" : "";
 
   return withDeadline(
     settle({
@@ -215,6 +224,24 @@ const applyMap = (s, map, now, auto) => {
           ? [...s.picked, { map, side: null, sideBy: null }]
           : s.picked,
       log: [...s.log, `${getActor(action, s)} ${verb} ${map}${note}`],
+      step: s.step + 1,
+    }),
+    now
+  );
+};
+
+// Puolen valinta (myös satunnainen, note kertoo syyn)
+const applySide = (s, side, now, note = "") => {
+  const action = FORMATS[s.format][s.step];
+  const last = s.picked[s.picked.length - 1];
+  const actor = getActor(action, s);
+
+  return withDeadline(
+    settle({
+      ...s,
+      history: [...s.history, snapshot(s)],
+      picked: [...s.picked.slice(0, -1), { ...last, side, sideBy: actor }],
+      log: [...s.log, `${actor} picked ${side} side on ${last.map}${note}`],
       step: s.step + 1,
     }),
     now
@@ -235,6 +262,7 @@ const initialState = () => ({
   toss: null, // { winnerSlot, winnerName, choice: null | "first" | "second", swapped, auto? }
   timerEnabled: false,
   deadline: null, // aikaleima (ms), jolloin nykyinen vuoro päättyy
+  absent: { A: false, B: false }, // poissa oleva joukkue: admin arpoo sen valinnat
   format: "BO1",
   maps: COMP_POOL,
   remaining: COMP_POOL,
@@ -263,6 +291,7 @@ function reducer(s, a) {
       return { ...s, [a.key]: a.value };
 
     case "SET_FORMAT": {
+      if (s.step !== 0 || s.deadline !== null) return s; // vedon alettua vain Reset avaa lukon
       // Grand Finalissa upper bracket -joukkue valitsee A/B, joten heitto perutaan
       const base =
         a.format === "BO5_GF" && s.toss
@@ -338,7 +367,7 @@ function reducer(s, a) {
       if (kind !== "ban" && kind !== "pick") return s;
       if (s.maps.length !== requiredPool(s.format)) return s;
       if (!s.remaining.includes(a.map)) return s;
-      return applyMap(s, a.map, a.now, false);
+      return applyMap(s, a.map, a.now);
     }
 
     // Aika loppui: satunnainen kartta jäljellä olevista (random annetaan actionissa)
@@ -350,25 +379,74 @@ function reducer(s, a) {
         s.remaining.length - 1,
         Math.floor(a.random * s.remaining.length)
       );
-      return applyMap(s, s.remaining[i], a.now, true);
+      return applyMap(s, s.remaining[i], a.now, " (random, time ran out)");
     }
 
     case "PICK_SIDE": {
       if (kind !== "side") return s;
-      const last = s.picked[s.picked.length - 1];
-      if (!last) return s;
+      if (!s.picked[s.picked.length - 1]) return s;
+      return applySide(s, a.side, a.now);
+    }
 
-      const actor = getActor(action, s);
-      return withDeadline(
-        settle({
-          ...s,
-          history: [...s.history, snapshot(s)],
-          picked: [...s.picked.slice(0, -1), { ...last, side: a.side, sideBy: actor }],
-          log: [...s.log, `${actor} picked ${a.side} side on ${last.map}`],
-          step: s.step + 1,
-        }),
-        a.now
-      );
+    /* ---- Admin-työkalut (sääntö 57) ---- */
+
+    // Vain toinen joukkue voi olla poissa; kun kumpikaan ei saavu, käytetään BOTH_ABSENT-työkalua
+    case "SET_ABSENT": {
+      const other = a.slot === "A" ? "B" : "A";
+      if (a.value && s.absent[other]) return s;
+      return { ...s, absent: { ...s.absent, [a.slot]: a.value } };
+    }
+
+    // Tuomarit arpovat vuoron: satunnainen kartta tai puoli (random annetaan actionissa)
+    case "RANDOM_TURN": {
+      if (s.toss && !s.toss.choice) return s;
+      if (s.maps.length !== requiredPool(s.format)) return s;
+      const note = " (randomized by officials)";
+
+      if (kind === "ban" || kind === "pick") {
+        if (s.remaining.length === 0) return s;
+        const i = Math.min(
+          s.remaining.length - 1,
+          Math.floor(a.random * s.remaining.length)
+        );
+        return applyMap(s, s.remaining[i], a.now, note);
+      }
+      if (kind === "side") {
+        if (!s.picked[s.picked.length - 1]) return s;
+        return applySide(s, a.random < 0.5 ? "Attack" : "Defense", a.now, note);
+      }
+      return s;
+    }
+
+    // Kumpikaan joukkue ei saapunut: poolin 3 (BO5: 5) ensimmäistä karttaa aakkosjärjestyksessä,
+    // puolet arvotaan. a.sides: lista "A" | "B" (kumpi aloittaa Attackilla)
+    case "BOTH_ABSENT": {
+      const count =
+        s.format === "BO3" ? 3 : s.format === "BO5" || s.format === "BO5_GF" ? 5 : 0;
+      if (count === 0 || s.step !== 0) return s;
+      if (s.toss && !s.toss.choice) return s;
+      if (s.maps.length !== requiredPool(s.format)) return s;
+
+      const chosen = [...s.maps].sort((x, y) => x.localeCompare(y)).slice(0, count);
+      const picked = chosen.map((map, i) => ({
+        map,
+        side: "Attack",
+        sideBy: displayName(s, a.sides[i] === "B" ? "B" : "A"),
+      }));
+
+      return {
+        ...s,
+        history: [...s.history, snapshot(s)],
+        picked,
+        remaining: [], // pelaamattomat kartat näkyvät bannattuina (himmeinä)
+        log: [
+          `Both teams absent: first ${count} maps in alphabetical order, sides randomized`,
+          ...picked.map((p, i) => `Map ${i + 1}: ${p.map} – ${p.sideBy} starts on Attack (random)`),
+        ],
+        step: FORMATS[s.format].length,
+        deadline: null,
+        absent: { A: false, B: false },
+      };
     }
 
     case "UNDO": {
@@ -461,6 +539,10 @@ function init() {
           : null,
       format,
       tossMode: d.tossMode === "choose" ? "choose" : "assign",
+      absent: {
+        A: d.absent?.A === true,
+        B: d.absent?.B === true && d.absent?.A !== true,
+      },
       timerEnabled: d.timerEnabled === true,
       deadline: Number.isFinite(d.deadline) ? d.deadline : null,
       maps: d.maps,
@@ -566,6 +648,7 @@ export default function ValorantVetoTool() {
     tossMode,
     timerEnabled,
     deadline,
+    absent,
     format,
     maps,
     remaining,
@@ -583,6 +666,7 @@ export default function ValorantVetoTool() {
   const action = FORMATS[format][step];
   const kind = kindOf(action);
   const actor = getActor(action, state);
+  const actorSlot = getSlot(action, state);
   const needed = requiredPool(format);
   const poolValid = maps.length === needed;
   const started = step > 0;
@@ -596,6 +680,20 @@ export default function ValorantVetoTool() {
   const [now, setNow] = useState(() => Date.now());
   const secondsLeft =
     deadline === null ? null : Math.max(0, Math.ceil((deadline - now) / 1000));
+
+  // Tämän hetkinen admin-oikeus. Yksi paikka, jota voi myöhemmin ohjata palvelimelta
+  // (huoneen admin-token) tai salasanalla. Nyt työkalut näkyvät kaikille.
+  const isAdmin = true;
+
+  // Poissa olevan joukkueen vuorot arvotaan automaattisesti pienellä viiveellä
+  const actorAbsent = !!actorSlot && absent[actorSlot];
+  useEffect(() => {
+    if (!actorAbsent || tossPending || !poolValid) return;
+    const id = setTimeout(() => {
+      dispatch({ type: "RANDOM_TURN", now: Date.now(), random: Math.random() });
+    }, 700);
+    return () => clearTimeout(id);
+  }, [actorAbsent, step, tossPending, poolValid]);
 
   // Päivittää näytön 4 kertaa sekunnissa; kun aika loppuu, arvotaan kartta.
   // Reducer tarkistaa itse, onko deadline todella ylittynyt, joten tuplakutsu on harmiton.
@@ -662,6 +760,7 @@ export default function ValorantVetoTool() {
           <select
             aria-label="Series format"
             value={format}
+            disabled={started || deadline !== null}
             onChange={(e) => dispatch({ type: "SET_FORMAT", format: e.target.value })}
             className={input}
           >
@@ -919,7 +1018,7 @@ export default function ValorantVetoTool() {
 
           {started && (
             <p className="text-sm text-[#6b7a88]">
-              The pool and team names can be changed after Reset.
+              The format, team names and map pool can be changed after Reset.
             </p>
           )}
         </div>
@@ -948,6 +1047,11 @@ export default function ValorantVetoTool() {
                   Current: <span className="text-[#ff4655]">{actor}</span> –{" "}
                   {KIND_LABELS[kind]}
                   {kind === "side" && lastPicked && ` on ${lastPicked.map}`}
+                  {actorAbsent && (
+                    <span className="ml-2 text-sm font-normal text-[#9fb0c0]">
+                      (absent, randomized)
+                    </span>
+                  )}
                 </>
               )}
             </div>
@@ -1080,6 +1184,91 @@ export default function ValorantVetoTool() {
           </button>
         </div>
 
+
+        {/* Admin-työkalut */}
+        {isAdmin && (
+          <details className="rounded border border-[#2a3642] p-3">
+            <summary className="cursor-pointer font-semibold">Admin tools</summary>
+
+            <div className="mt-3 space-y-5">
+              <div className="space-y-2">
+                <h3 className="font-semibold">Late or absent team</h3>
+                <p className="text-sm text-[#6b7a88]">
+                  If a team has not arrived within 10 minutes of the veto time,
+                  officials randomize its choices (VCT Kickoff rule 57). If both
+                  teams are absent, use the alphabetical series below instead.
+                </p>
+
+                {["A", "B"].map((slot) => {
+                  const otherAbsent = absent[slot === "A" ? "B" : "A"];
+                  return (
+                  <label
+                    key={slot}
+                    className={`flex items-center gap-2 text-sm ${
+                      otherAbsent ? "opacity-50" : ""
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={absent[slot]}
+                      disabled={otherAbsent}
+                      onChange={(e) =>
+                        dispatch({ type: "SET_ABSENT", slot, value: e.target.checked })
+                      }
+                      className="h-4 w-4 accent-[#ff4655]"
+                    />
+                    {slot === "A" ? nameA : nameB} (Team {slot}) is absent: randomize
+                    its choices
+                  </label>
+                  );
+                })}
+
+                <button
+                  onClick={() =>
+                    dispatch({
+                      type: "RANDOM_TURN",
+                      now: Date.now(),
+                      random: Math.random(),
+                    })
+                  }
+                  disabled={kind === "done" || tossPending || !poolValid}
+                  className={btn}
+                >
+                  Randomize current turn
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-semibold">Both teams absent</h3>
+                <p className="text-sm text-[#6b7a88]">
+                  The first three maps of the pool (five in BO5) are played in
+                  alphabetical order and the sides are randomized. This rule
+                  covers BO3 and BO5 only, and it can be used before the veto
+                  starts.
+                </p>
+                <button
+                  onClick={() =>
+                    dispatch({
+                      type: "BOTH_ABSENT",
+                      sides: Array.from({ length: 5 }, () =>
+                        Math.random() < 0.5 ? "A" : "B"
+                      ),
+                    })
+                  }
+                  disabled={
+                    step !== 0 ||
+                    tossPending ||
+                    !poolValid ||
+                    !["BO3", "BO5", "BO5_GF"].includes(format)
+                  }
+                  className={btn}
+                >
+                  Set alphabetical series
+                </button>
+              </div>
+            </div>
+          </details>
+        )}
       </div>
     </div>
   );

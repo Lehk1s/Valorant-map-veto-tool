@@ -1,7 +1,7 @@
 # Valorant Map Veto Tool
 
 A web-based tool for Valorant tournament map vetoes.
-Supports BO1, BO3, BO5, and BO5 Grand Final formats with coin toss, turn timer, auto-decider, side picks, and full veto logs.
+Supports BO1, BO3, BO5, and BO5 Grand Final formats with coin toss, turn timer, admin tools for absent teams, auto-decider, side picks, and full veto logs.
 
 Perfect for tournament organizers, casters, and observers.
 
@@ -13,6 +13,7 @@ Perfect for tournament organizers, casters, and observers.
 * Coin toss to decide Team A (toss assigns Team A, or winner chooses veto order)
 * Upper bracket selection for Grand Finals
 * Optional 60-second turn timer with randomized auto-pick when time runs out
+* Admin tools for late or absent teams: randomized choices, and an alphabetical series when both teams are absent
 * Auto-decider for last remaining map
 * Side pick tracking
 * Undo last action
@@ -59,7 +60,15 @@ Open your browser at http://localhost:5173 (or the URL shown in the terminal).
 8. Use Undo to revert the last action, or Reset to start over.
 9. Copy the link to share the current veto, or copy the results as text.
 
-The map pool, team names, coin toss, and timer setting can only be changed before the veto starts.
+The format, map pool, team names, coin toss, and timer setting can only be changed before the veto starts. Press Reset to unlock them.
+
+### Admin tools
+
+The collapsible Admin tools section at the bottom of the page handles teams that are late or do not show up (VCT Kickoff rule 57):
+
+* Absent team: mark a team as absent and its bans, picks and side choices are randomized automatically when it is their turn.
+* Randomize current turn: randomize a single turn manually.
+* Both teams absent: for BO3 and BO5, the first three (BO5: five) maps of the pool are played in alphabetical order and the sides are randomized. The remaining maps are shown as unplayed.
 
 ### Current competitive pool
 
@@ -81,9 +90,10 @@ React, Vite, Tailwind CSS
 
 ## Future Roadmap
 
+* Veto record with timestamps and copyable veto log
+* Rules presets for different tournaments
 * Spectator / OBS overlay mode
 * Live sync with roles (admin, team captains, spectators) for remote and LAN use
-* Admin tools for late or no-show teams (randomize choices)
-* Rules presets for different tournaments
+* Server selection calculator
 * Discord-formatted results export (text / PNG)
 * Support for other games
