@@ -1,7 +1,7 @@
 # Valorant Map Veto Tool
 
 A web-based tool for Valorant tournament map vetoes.
-Supports BO1, BO3, BO5, and BO5 Grand Final formats with coin toss, auto-decider, side picks, and full veto logs.
+Supports BO1, BO3, BO5, and BO5 Grand Final formats with coin toss, turn timer, auto-decider, side picks, and full veto logs.
 
 Perfect for tournament organizers, casters, and observers.
 
@@ -12,6 +12,7 @@ Perfect for tournament organizers, casters, and observers.
 * BO1, BO3, BO5, and BO5 Grand Final map selection formats, following the VCT veto procedures
 * Coin toss to decide Team A (toss assigns Team A, or winner chooses veto order)
 * Upper bracket selection for Grand Finals
+* Optional 60-second turn timer with randomized auto-pick when time runs out
 * Auto-decider for last remaining map
 * Side pick tracking
 * Undo last action
@@ -43,20 +44,22 @@ Open your browser at http://localhost:5173 (or the URL shown in the terminal).
 
 ## Usage
 
-1. Enter team names (optional, defaults to Team A and Team B).
+1. Select the format (BO1, BO3, BO5, or BO5 Grand Final) and, if you want it, turn on the 60-second turn timer.
+2. Enter team names (optional, defaults to Team A and Team B).
    Team A vetoes first: the higher seed, or the team decided by the coin toss.
-2. Select format (BO1, BO3, BO5, or BO5 Grand Final).
 3. Decide Team A and Team B:
-   * Coin toss: flip the coin. Depending on the mode, the toss either assigns Team A directly or the winner chooses to veto first or second.
+   * Coin toss: choose the method, then flip the coin. The toss either assigns Team A directly or the winner chooses to veto first or second.
    * Seeding: skip the toss and use Swap A / B if the better seed should be Team A.
    * Grand Final: the upper bracket team bans two maps and chooses whether it is Team A or Team B. Enter it in the matching field and select it as the upper bracket team. The coin toss is hidden in this format.
-4. Choose the map pool: use the competitive pool preset, select all maps, or pick maps one by one. The pool needs exactly 7 maps.
-5. Click maps to ban or pick, follow prompts for side selections.
-6. See the veto log and final series order update in real-time.
-7. Use Undo to revert the last action, or Reset to start over.
-8. Copy the link to share the current veto, or copy the results as text.
+4. Check the map pool (collapsible section): use the competitive pool preset, select all maps, or pick maps one by one. The pool needs exactly 7 maps.
+5. If the timer is on, press Start veto. Otherwise just click a map.
+6. Click maps to ban or pick, and follow the prompts for side selections.
+   With the timer on, each ban or pick has 60 seconds. If time runs out, a random map is chosen. Side picks are not timed.
+7. See the veto log and final series order update in real-time.
+8. Use Undo to revert the last action, or Reset to start over.
+9. Copy the link to share the current veto, or copy the results as text.
 
-The map pool, team names, and coin toss can only be changed before the veto starts.
+The map pool, team names, coin toss, and timer setting can only be changed before the veto starts.
 
 ### Current competitive pool
 
@@ -78,7 +81,6 @@ React, Vite, Tailwind CSS
 
 ## Future Roadmap
 
-* 60-second turn timer with randomized auto-pick
 * Spectator / OBS overlay mode
 * Live sync with roles (admin, team captains, spectators) for remote and LAN use
 * Admin tools for late or no-show teams (randomize choices)
