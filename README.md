@@ -21,9 +21,10 @@ Perfect for tournament organizers, casters, and observers.
 * Preset map pools (current competitive pool, all maps) and custom maps
 * Map pool validation per format (exactly 7 maps)
 * Map images on cards, with banned and picked maps shown visually
-* Veto log and final series order display
+* Veto log with timestamps and turn durations, plus a copyable written veto record
+* Final series order display
 * Shareable URL (full veto state in link)
-* Copy link and copy results buttons
+* Copy link, copy results and copy veto log buttons
 
 ---
 
@@ -58,7 +59,7 @@ Open your browser at http://localhost:5173 (or the URL shown in the terminal).
    With the timer on, each ban or pick has 60 seconds. If time runs out, a random map is chosen. Side picks are not timed.
 7. See the veto log and final series order update in real-time.
 8. Use Undo to revert the last action, or Reset to start over.
-9. Copy the link to share the current veto, or copy the results as text.
+9. Copy the link to share the current veto, copy the results as text, or copy the full veto log (timestamps, turn durations, coin toss, pool and final series order) as a written record.
 
 The format, map pool, team names, coin toss, and timer setting can only be changed before the veto starts. Press Reset to unlock them.
 
@@ -66,8 +67,8 @@ The format, map pool, team names, coin toss, and timer setting can only be chang
 
 The collapsible Admin tools section at the bottom of the page handles teams that are late or do not show up (VCT Kickoff rule 57):
 
-* Absent team: mark a team as absent and its bans, picks and side choices are randomized automatically when it is their turn.
-* Randomize current turn: randomize a single turn manually.
+* Absent team: mark a team as absent and its bans, picks and side choices are randomized automatically when it is their turn. A team can only be marked absent before the veto starts (before Start veto when the timer is on).
+* Randomize current turn: randomize a single turn manually. With the turn timer on, timed turns are randomized automatically, so the button is only shown for side picks, which are not timed.
 * Both teams absent: for BO3 and BO5, the first three (BO5: five) maps of the pool are played in alphabetical order and the sides are randomized. The remaining maps are shown as unplayed.
 
 ### Current competitive pool
@@ -90,7 +91,6 @@ React, Vite, Tailwind CSS
 
 ## Future Roadmap
 
-* Veto record with timestamps and copyable veto log
 * Rules presets for different tournaments
 * Spectator / OBS overlay mode
 * Live sync with roles (admin, team captains, spectators) for remote and LAN use

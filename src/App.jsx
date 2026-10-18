@@ -175,9 +175,12 @@ const snapshot = (s) => ({
   step: s.step,
 });
 
+// Lokimerkintä: teksti + aikaleima (ms). timed = oikea pelaajan vuoro, jolle näytetään kesto.
+const entry = (text, at, timed = false) => ({ text, at, timed });
+
 // Jos seuraava vaihe on decider ja jäljellä on yksi kartta, ratkaistaan se
 // samassa tilasiirtymässä -> undo palauttaa kerralla oikeaan kohtaan.
-const settle = (s) => {
+const settle = (s, now) => {
   const action = FORMATS[s.format][s.step];
   if (action === "decider" && s.remaining.length === 1) {
     const map = s.remaining[0];
@@ -185,7 +188,7 @@ const settle = (s) => {
       ...s,
       remaining: [],
       picked: [...s.picked, { map, side: null, sideBy: null }],
-      log: [...s.log, `Decider map: ${map} (left over)`],
+      log: [...s.log, entry(`Decider map: ${map} (left over)`, now)],
       step: s.step + 1,
     };
   }
@@ -223,9 +226,9 @@ const applyMap = (s, map, now, note = "") => {
         kind === "pick"
           ? [...s.picked, { map, side: null, sideBy: null }]
           : s.picked,
-      log: [...s.log, `${getActor(action, s)} ${verb} ${map}${note}`],
+      log: [...s.log, entry(`${getActor(action, s)} ${verb} ${map}${note}`, now, true)],
       step: s.step + 1,
-    }),
+    }, now),
     now
   );
 };
@@ -241,12 +244,20 @@ const applySide = (s, side, now, note = "") => {
       ...s,
       history: [...s.history, snapshot(s)],
       picked: [...s.picked.slice(0, -1), { ...last, side, sideBy: actor }],
-      log: [...s.log, `${actor} picked ${side} side on ${last.map}${note}`],
+      log: [
+        ...s.log,
+        entry(`${actor} picked ${side} side on ${last.map}${note}`, now, true),
+      ],
       step: s.step + 1,
-    }),
+    }, now),
     now
   );
 };
+
+// Kellonaika (24 h) ja päivämäärä aikaleimasta
+const formatTime = (at) =>
+  at ? new Date(at).toLocaleTimeString("en-GB", { hour12: false }) : "";
+const formatDate = (at) => (at ? new Date(at).toLocaleDateString("en-CA") : "");
 
 const formatClock = (seconds) =>
   `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
@@ -262,6 +273,7 @@ const initialState = () => ({
   toss: null, // { winnerSlot, winnerName, choice: null | "first" | "second", swapped, auto? }
   timerEnabled: false,
   deadline: null, // aikaleima (ms), jolloin nykyinen vuoro päättyy
+  startedAt: null, // ajastimella käynnistetyn vedon alkuaika (ms)
   absent: { A: false, B: false }, // poissa oleva joukkue: admin arpoo sen valinnat
   format: "BO1",
   maps: COMP_POOL,
@@ -280,6 +292,7 @@ const freshVeto = (s) => ({
   step: 0,
   history: [],
   deadline: null,
+  startedAt: null,
 });
 
 function reducer(s, a) {
@@ -358,7 +371,7 @@ function reducer(s, a) {
       if (!s.timerEnabled || s.deadline !== null || s.step !== 0) return s;
       if (s.maps.length !== requiredPool(s.format)) return s;
       if (s.toss && !s.toss.choice) return s;
-      return withDeadline(s, a.now);
+      return withDeadline({ ...s, startedAt: a.now }, a.now);
     }
 
     case "VETO_MAP": {
@@ -394,6 +407,8 @@ function reducer(s, a) {
     case "SET_ABSENT": {
       const other = a.slot === "A" ? "B" : "A";
       if (a.value && s.absent[other]) return s;
+      // vedon alettua (ensimmäinen vuoro tai Start veto) ei voi enää merkitä poissaolevaksi
+      if (a.value && (s.step > 0 || s.startedAt !== null)) return s;
       return { ...s, absent: { ...s.absent, [a.slot]: a.value } };
     }
 
@@ -440,8 +455,16 @@ function reducer(s, a) {
         picked,
         remaining: [], // pelaamattomat kartat näkyvät bannattuina (himmeinä)
         log: [
-          `Both teams absent: first ${count} maps in alphabetical order, sides randomized`,
-          ...picked.map((p, i) => `Map ${i + 1}: ${p.map} – ${p.sideBy} starts on Attack (random)`),
+          entry(
+            `Both teams absent: first ${count} maps in alphabetical order, sides randomized`,
+            a.now
+          ),
+          ...picked.map((p, i) =>
+            entry(
+              `Map ${i + 1}: ${p.map} – ${p.sideBy} starts on Attack (random)`,
+              a.now
+            )
+          ),
         ],
         step: FORMATS[s.format].length,
         deadline: null,
@@ -455,7 +478,7 @@ function reducer(s, a) {
       const restored = { ...s, ...prev, history: s.history.slice(0, -1) };
       // Alkuun palatessa ajastin pysähtyy; muuten palautetun vuoron kello alkaa alusta
       return restored.step === 0
-        ? { ...restored, deadline: null }
+        ? { ...restored, deadline: null, startedAt: null }
         : withDeadline(restored, a.now);
     }
 
@@ -548,7 +571,12 @@ function init() {
       maps: d.maps,
       remaining: d.remaining,
       picked: d.picked,
-      log: d.log,
+      log: d.log.map((l) =>
+        typeof l === "string"
+          ? entry(l, null)
+          : entry(String(l?.text ?? ""), Number.isFinite(l?.at) ? l.at : null, !!l?.timed)
+      ),
+      startedAt: Number.isFinite(d.startedAt) ? d.startedAt : null,
       step: d.step,
     };
   } catch {
@@ -648,6 +676,7 @@ export default function ValorantVetoTool() {
     tossMode,
     timerEnabled,
     deadline,
+    startedAt,
     absent,
     format,
     maps,
@@ -742,6 +771,45 @@ export default function ValorantVetoTool() {
           `Map ${i + 1}: ${p.map}${p.side ? ` (Side: ${p.side} by ${p.sideBy})` : ""}`
       )
       .join("\n");
+
+  // Vuoron kesto: aika edellisestä merkinnästä (ensimmäiselle ajastimen käynnistyksestä)
+  const durations = log.map((e, i) => {
+    const prev = i === 0 ? startedAt : log[i - 1].at;
+    return e.timed && e.at && prev ? Math.max(0, Math.round((e.at - prev) / 1000)) : null;
+  });
+
+  // Kirjallinen vetotallenne (VCT Kickoff 43)
+  const vetoLogText = [
+    `Map veto: ${nameA} vs ${nameB} (${FORMAT_LABELS[format]})`,
+    ...(log[0]?.at ? [`Date: ${formatDate(log[0].at)}`] : []),
+    `Team A: ${nameA}, Team B: ${nameB}`,
+    ...(toss?.choice
+      ? [
+          `Coin toss: ${toss.winnerName} won the toss${
+            toss.auto ? "" : ` and chose to veto ${toss.choice}`
+          }`,
+        ]
+      : []),
+    ...(timerEnabled ? [`Turn timer: ${TURN_SECONDS} s per ban or pick`] : []),
+    `Map pool: ${maps.join(", ")}`,
+    "",
+    ...log.map((e, i) => {
+      const time = formatTime(e.at);
+      return `${time ? `[${time}] ` : ""}${e.text}${
+        durations[i] !== null ? ` (+${durations[i]} s)` : ""
+      }`;
+    }),
+    ...(picked.length > 0
+      ? [
+          "",
+          "Final series order:",
+          ...picked.map(
+            (p, i) =>
+              `Map ${i + 1}: ${p.map}${p.side ? ` (Side: ${p.side} by ${p.sideBy})` : ""}`
+          ),
+        ]
+      : []),
+  ].join("\n");
 
   const submitMap = () => {
     dispatch({ type: "ADD_MAP", name: newMap });
@@ -1148,8 +1216,18 @@ export default function ValorantVetoTool() {
             {log.length === 0 && (
               <p className="text-sm text-[#6b7a88]">Nothing has happened yet.</p>
             )}
-            {log.map((l, i) => (
-              <div key={i}>{l}</div>
+            {log.map((e, i) => (
+              <div key={i}>
+                {e.at && (
+                  <span className="mr-2 tabular-nums text-[#6b7a88]">
+                    {formatTime(e.at)}
+                  </span>
+                )}
+                {e.text}
+                {durations[i] !== null && (
+                  <span className="ml-2 text-sm text-[#6b7a88]">+{durations[i]} s</span>
+                )}
+              </div>
             ))}
           </div>
         </div>
@@ -1182,6 +1260,13 @@ export default function ValorantVetoTool() {
           >
             {copied === "results" ? "Results copied" : "Copy results"}
           </button>
+          <button
+            onClick={() => copyText(vetoLogText, "log")}
+            disabled={log.length === 0}
+            className={btn}
+          >
+            {copied === "log" ? "Veto log copied" : "Copy veto log"}
+          </button>
         </div>
 
 
@@ -1197,21 +1282,27 @@ export default function ValorantVetoTool() {
                   If a team has not arrived within 10 minutes of the veto time,
                   officials randomize its choices (VCT Kickoff rule 57). If both
                   teams are absent, use the alphabetical series below instead.
+                  A team can only be marked absent before the veto starts (before
+                  Start veto when the timer is on). With the timer on, a turn that
+                  runs out of time is randomized automatically; side picks are not
+                  timed, so use Randomize current turn for those.
                 </p>
 
                 {["A", "B"].map((slot) => {
                   const otherAbsent = absent[slot === "A" ? "B" : "A"];
+                  const vetoStarted = started || startedAt !== null;
+                  const locked = otherAbsent || (vetoStarted && !absent[slot]);
                   return (
                   <label
                     key={slot}
                     className={`flex items-center gap-2 text-sm ${
-                      otherAbsent ? "opacity-50" : ""
+                      locked ? "opacity-50" : ""
                     }`}
                   >
                     <input
                       type="checkbox"
                       checked={absent[slot]}
-                      disabled={otherAbsent}
+                      disabled={locked}
                       onChange={(e) =>
                         dispatch({ type: "SET_ABSENT", slot, value: e.target.checked })
                       }
@@ -1223,19 +1314,21 @@ export default function ValorantVetoTool() {
                   );
                 })}
 
-                <button
-                  onClick={() =>
-                    dispatch({
-                      type: "RANDOM_TURN",
-                      now: Date.now(),
-                      random: Math.random(),
-                    })
-                  }
-                  disabled={kind === "done" || tossPending || !poolValid}
-                  className={btn}
-                >
-                  Randomize current turn
-                </button>
+                {(!timerEnabled || kind === "side") && (
+                  <button
+                    onClick={() =>
+                      dispatch({
+                        type: "RANDOM_TURN",
+                        now: Date.now(),
+                        random: Math.random(),
+                      })
+                    }
+                    disabled={kind === "done" || tossPending || !poolValid}
+                    className={btn}
+                  >
+                    Randomize current turn
+                  </button>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -1250,6 +1343,7 @@ export default function ValorantVetoTool() {
                   onClick={() =>
                     dispatch({
                       type: "BOTH_ABSENT",
+                      now: Date.now(),
                       sides: Array.from({ length: 5 }, () =>
                         Math.random() < 0.5 ? "A" : "B"
                       ),
