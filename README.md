@@ -12,7 +12,8 @@ Perfect for tournament organizers, casters, and observers.
 * BO1, BO3, BO5, and BO5 Grand Final map selection formats, following the VCT veto procedures
 * Coin toss to decide Team A (toss assigns Team A, or winner chooses veto order)
 * Upper bracket selection for Grand Finals
-* Optional 60-second turn timer with randomized auto-pick when time runs out
+* Optional 60-second turn timer with randomized auto-pick when time runs out, a blinking clock and optional warning sound for the last 10 seconds
+* Admin timer controls: Pause / Resume and +30 s, all written to the veto log
 * Admin tools for late or absent teams: randomized choices, and an alphabetical series when both teams are absent
 * Auto-decider for last remaining map
 * Side pick tracking
@@ -63,6 +64,12 @@ Open your browser at http://localhost:5173 (or the URL shown in the terminal).
 9. Copy the link to share the current veto, copy the results as text, or copy the full veto log (timestamps, turn durations, coin toss, pool and final series order) as a written record.
 
 The format, map pool, team names, coin toss, and timer setting can only be changed before the veto starts. Press Reset to unlock them.
+
+### Turn timer
+
+With the timer on, press Start veto to start the clock. The clock turns red and blinks for the last 10 seconds, and the optional Warning sound beeps at 10 seconds and during the last 5 seconds (it only plays in the browser where you turn it on).
+
+Admin tools has Pause / Resume and +30 s controls for technical problems. Pauses are meant to be granted by tournament officials only. While paused, nobody can ban or pick, and the pause time is not counted in the turn durations. Pauses and extra time are written to the veto log.
 
 ### Admin tools
 

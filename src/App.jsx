@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 
 /* ---------- Vakiot ---------- */
 
@@ -177,7 +177,8 @@ const snapshot = (s) => ({
 });
 
 // Lokimerkintä: teksti + aikaleima (ms). timed = oikea pelaajan vuoro, jolle näytetään kesto.
-const entry = (text, at, timed = false) => ({ text, at, timed });
+// kind: "pause" | "resume" | "time" = adminin ajastinmuutos (ei pelaajan vuoro)
+const entry = (text, at, timed = false, kind = null) => ({ text, at, timed, kind });
 
 // Jos seuraava vaihe on decider ja jäljellä on yksi kartta, ratkaistaan se
 // samassa tilasiirtymässä -> undo palauttaa kerralla oikeaan kohtaan.
@@ -204,11 +205,12 @@ const TIMED_KINDS = ["ban", "pick"];
 // Asettaa seuraavan vuoron deadlinen (null, jos ajastin pois tai vuoro ei ole ajastettu).
 // "now" annetaan actionissa, jotta reducer pysyy puhtaana.
 const withDeadline = (s, now) => {
-  if (!s.timerEnabled) return { ...s, deadline: null };
+  if (!s.timerEnabled) return { ...s, deadline: null, pausedLeft: null };
   const kind = kindOf(FORMATS[s.format][s.step]);
   return {
     ...s,
     deadline: TIMED_KINDS.includes(kind) ? now + TURN_SECONDS * 1000 : null,
+    pausedLeft: null,
   };
 };
 
@@ -281,6 +283,7 @@ const initialState = () => ({
   timerEnabled: false,
   deadline: null, // aikaleima (ms), jolloin nykyinen vuoro päättyy
   startedAt: null, // ajastimella käynnistetyn vedon alkuaika (ms)
+  pausedLeft: null, // jäljellä oleva aika (ms), kun admin on pysäyttänyt kellon
   absent: { A: false, B: false }, // poissa oleva joukkue: admin arpoo sen valinnat
   format: "BO1",
   maps: COMP_POOL,
@@ -302,6 +305,7 @@ const freshVeto = (s) => ({
   history: [],
   deadline: null,
   startedAt: null,
+  pausedLeft: null,
 });
 
 function reducer(s, a) {
@@ -313,7 +317,7 @@ function reducer(s, a) {
       return { ...s, [a.key]: a.value };
 
     case "SET_FORMAT": {
-      if (s.step !== 0 || s.deadline !== null) return s; // vedon alettua vain Reset avaa lukon
+      if (s.step !== 0 || s.startedAt !== null) return s; // vedon alettua vain Reset avaa lukon
       // Grand Finalissa upper bracket -joukkue valitsee A/B, joten heitto perutaan
       const base =
         a.format === "BO5_GF" && s.toss
@@ -377,10 +381,57 @@ function reducer(s, a) {
 
     // Ajastin käynnistetään erikseen, jotta ensimmäisen vuoron kello ei lähde itsestään
     case "START_TIMER": {
-      if (!s.timerEnabled || s.deadline !== null || s.step !== 0) return s;
+      if (!s.timerEnabled || s.deadline !== null || s.startedAt !== null || s.step !== 0) return s;
       if (s.maps.length !== requiredPool(s.format)) return s;
       if (s.toss && !s.toss.choice) return s;
       return withDeadline({ ...s, startedAt: a.now }, a.now);
+    }
+
+    /* ---- Ajastimen hallinta (vain admin / tuomarit) ---- */
+
+    case "TIMER_PAUSE": {
+      if (!s.timerEnabled || s.deadline === null) return s;
+      const left = Math.max(0, s.deadline - a.now);
+      return {
+        ...s,
+        deadline: null,
+        pausedLeft: left,
+        log: [
+          ...s.log,
+          entry(
+            `Timer paused by officials (${formatClock(Math.ceil(left / 1000))} left)`,
+            a.now,
+            false,
+            "pause"
+          ),
+        ],
+      };
+    }
+
+    case "TIMER_RESUME": {
+      if (s.pausedLeft === null) return s;
+      return {
+        ...s,
+        deadline: a.now + s.pausedLeft,
+        pausedLeft: null,
+        log: [
+          ...s.log,
+          entry(
+            `Timer resumed by officials (${formatClock(Math.ceil(s.pausedLeft / 1000))} left)`,
+            a.now,
+            false,
+            "resume"
+          ),
+        ],
+      };
+    }
+
+    case "TIMER_ADD": {
+      if (s.deadline === null && s.pausedLeft === null) return s;
+      const text = entry(`+${a.ms / 1000} s added to the turn by officials`, a.now, false, "time");
+      return s.deadline !== null
+        ? { ...s, deadline: s.deadline + a.ms, log: [...s.log, text] }
+        : { ...s, pausedLeft: s.pausedLeft + a.ms, log: [...s.log, text] };
     }
 
     case "VETO_MAP": {
@@ -424,6 +475,7 @@ function reducer(s, a) {
     // Tuomarit arpovat vuoron: satunnainen kartta tai puoli (random annetaan actionissa)
     case "RANDOM_TURN": {
       if (s.toss && !s.toss.choice) return s;
+      if (s.pausedLeft !== null) return s; // kello on pysäytetty
       if (s.maps.length !== requiredPool(s.format)) return s;
       const note = " (randomized by officials)";
 
@@ -493,7 +545,7 @@ function reducer(s, a) {
       const restored = { ...s, ...prev, history: s.history.slice(0, -1) };
       // Alkuun palatessa ajastin pysähtyy; muuten palautetun vuoron kello alkaa alusta
       return restored.step === 0
-        ? { ...restored, deadline: null, startedAt: null }
+        ? { ...restored, deadline: null, startedAt: null, pausedLeft: null }
         : withDeadline(restored, a.now);
     }
 
@@ -602,9 +654,16 @@ function init() {
       log: d.log.map((l) =>
         typeof l === "string"
           ? entry(l, null)
-          : entry(String(l?.text ?? ""), Number.isFinite(l?.at) ? l.at : null, !!l?.timed)
+          : entry(
+              String(l?.text ?? ""),
+              Number.isFinite(l?.at) ? l.at : null,
+              !!l?.timed,
+              typeof l?.kind === "string" ? l.kind : null
+            )
       ),
       startedAt: Number.isFinite(d.startedAt) ? d.startedAt : null,
+      pausedLeft:
+        Number.isFinite(d.pausedLeft) && !Number.isFinite(d.deadline) ? d.pausedLeft : null,
       step: d.step,
     };
   } catch {
@@ -704,6 +763,21 @@ function MapCard({ map, status, caption, clickable, onClick }) {
   );
 }
 
+/* ---------- Äänimerkki ---------- */
+
+// Lyhyt piippaus Web Audiolla (AudioContext luodaan käyttäjän klikkauksella)
+const beep = (ctx, freq, ms) => {
+  if (!ctx) return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.frequency.value = freq;
+  gain.gain.value = 0.08;
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + ms / 1000);
+};
+
 /* ---------- Varmistuspainike ---------- */
 
 // Kaksivaiheinen painike: jos needsConfirm on tosi, ensimmäinen klikkaus kysyy varmistuksen.
@@ -782,6 +856,7 @@ export default function ValorantVetoTool() {
     timerEnabled,
     deadline,
     startedAt,
+    pausedLeft,
     absent,
     format,
     maps,
@@ -812,11 +887,41 @@ export default function ValorantVetoTool() {
   // Ajastin: jos käytössä, karttoja voi klikata vasta kun kello on käynnistetty
   const timerReady = !timerEnabled || deadline !== null;
   const canStartTimer =
-    timerEnabled && step === 0 && deadline === null && poolValid && !tossPending;
+    timerEnabled &&
+    step === 0 &&
+    deadline === null &&
+    startedAt === null &&
+    poolValid &&
+    !tossPending;
 
   const [now, setNow] = useState(() => Date.now());
+  const paused = pausedLeft !== null;
   const secondsLeft =
-    deadline === null ? null : Math.max(0, Math.ceil((deadline - now) / 1000));
+    deadline !== null
+      ? Math.max(0, Math.ceil((deadline - now) / 1000))
+      : paused
+        ? Math.ceil(pausedLeft / 1000)
+        : null;
+  const warning = deadline !== null && secondsLeft !== null && secondsLeft <= 10;
+
+  // Varoitusääni (valinnainen, vain tällä selaimella): 10 s kohdalla ja viimeiset 5 s
+  const [soundOn, setSoundOn] = useState(false);
+  const audioRef = useRef(null);
+  const toggleSound = (on) => {
+    if (on) {
+      if (!audioRef.current) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (Ctx) audioRef.current = new Ctx();
+      }
+      audioRef.current?.resume?.();
+    }
+    setSoundOn(on);
+  };
+  useEffect(() => {
+    if (!soundOn || deadline === null || secondsLeft === null) return;
+    if (secondsLeft === 10) beep(audioRef.current, 660, 220);
+    else if (secondsLeft >= 1 && secondsLeft <= 5) beep(audioRef.current, 880, 110);
+  }, [secondsLeft, soundOn, deadline]);
 
   // Tämän hetkinen admin-oikeus. Yksi paikka, jota voi myöhemmin ohjata palvelimelta
   // (huoneen admin-token) tai salasanalla. Nyt työkalut näkyvät kaikille.
@@ -830,7 +935,7 @@ export default function ValorantVetoTool() {
       dispatch({ type: "RANDOM_TURN", now: Date.now(), random: Math.random() });
     }, 700);
     return () => clearTimeout(id);
-  }, [actorAbsent, step, tossPending, poolValid]);
+  }, [actorAbsent, step, tossPending, poolValid, paused]);
 
   // Päivittää näytön 4 kertaa sekunnissa; kun aika loppuu, arvotaan kartta.
   // Reducer tarkistaa itse, onko deadline todella ylittynyt, joten tuplakutsu on harmiton.
@@ -912,10 +1017,34 @@ export default function ValorantVetoTool() {
       .join("\n");
 
   // Vuoron kesto: aika edellisestä merkinnästä (ensimmäiselle ajastimen käynnistyksestä)
-  const durations = log.map((e, i) => {
-    const prev = i === 0 ? startedAt : log[i - 1].at;
-    return e.timed && e.at && prev ? Math.max(0, Math.round((e.at - prev) / 1000)) : null;
-  });
+  // Admin-merkinnät (tauko, jatko, lisäaika) eivät ole vuoroja; tauon aika vähennetään kestosta.
+  const durations = [];
+  {
+    let turnStart = startedAt;
+    let pausedMs = 0;
+    let pauseAt = null;
+    log.forEach((e) => {
+      if (e.kind === "pause") {
+        pauseAt = e.at;
+        durations.push(null);
+      } else if (e.kind === "resume") {
+        if (pauseAt && e.at) pausedMs += e.at - pauseAt;
+        pauseAt = null;
+        durations.push(null);
+      } else if (e.kind === "time") {
+        durations.push(null);
+      } else {
+        durations.push(
+          e.timed && e.at && turnStart
+            ? Math.max(0, Math.round((e.at - turnStart - pausedMs) / 1000))
+            : null
+        );
+        if (e.at) turnStart = e.at;
+        pausedMs = 0;
+        pauseAt = null;
+      }
+    });
+  }
 
   // Kirjallinen vetotallenne (VCT Kickoff 43)
   const vetoLogText = [
@@ -967,7 +1096,7 @@ export default function ValorantVetoTool() {
           <select
             aria-label="Series format"
             value={format}
-            disabled={started || deadline !== null}
+            disabled={started || startedAt !== null}
             onChange={(e) => dispatch({ type: "SET_FORMAT", format: e.target.value })}
             className={input}
           >
@@ -982,7 +1111,7 @@ export default function ValorantVetoTool() {
             <input
               type="checkbox"
               checked={timerEnabled}
-              disabled={started || deadline !== null}
+              disabled={started || startedAt !== null}
               onChange={(e) =>
                 dispatch({
                   type: "SET_FIELD",
@@ -994,6 +1123,18 @@ export default function ValorantVetoTool() {
             />
             {TURN_SECONDS} s turn timer
           </label>
+
+          {timerEnabled && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={soundOn}
+                onChange={(e) => toggleSound(e.target.checked)}
+                className="h-4 w-4 accent-[#ff4655]"
+              />
+              Warning sound (this browser)
+            </label>
+          )}
         </div>
 
         {/* Joukkueet */}
@@ -1244,7 +1385,11 @@ export default function ValorantVetoTool() {
         )}
 
         {/* Vuoro */}
-        <div className="space-y-2 rounded border border-[#3a4a5a] bg-[#1b2733] p-3">
+        <div
+          className={`space-y-2 rounded border bg-[#1b2733] p-3 ${
+            warning ? "border-[#ff4655]" : "border-[#3a4a5a]"
+          }`}
+        >
           <div className="flex flex-wrap items-center justify-between gap-2 font-semibold">
             <div>
               {kind === "done" ? (
@@ -1263,13 +1408,21 @@ export default function ValorantVetoTool() {
               )}
             </div>
             {secondsLeft !== null && (
-              <div
-                className={`text-xl tabular-nums ${
-                  secondsLeft <= 10 ? "text-[#ff4655]" : ""
-                }`}
-                aria-label="Time left for this turn"
-              >
-                {formatClock(secondsLeft)}
+              <div className="flex items-center gap-2">
+                {paused && (
+                  <span className="rounded bg-[#ff4655] px-2 py-0.5 text-xs font-semibold text-white">
+                    Paused
+                  </span>
+                )}
+                <div
+                  role="timer"
+                  aria-label="Time left for this turn"
+                  className={`text-xl tabular-nums ${
+                    warning ? "animate-pulse text-[#ff4655]" : ""
+                  }`}
+                >
+                  {formatClock(secondsLeft)}
+                </div>
               </div>
             )}
           </div>
@@ -1481,6 +1634,44 @@ export default function ValorantVetoTool() {
                   </button>
                 )}
               </div>
+
+              {timerEnabled && (
+                <div className="space-y-2">
+                  <h3 className="font-semibold">Turn timer</h3>
+                  <p className="text-sm text-[#6b7a88]">
+                    Pause the clock for technical problems. Pauses are granted by
+                    tournament officials only, and the clock does not run while the
+                    veto is paused. Pauses and extra time are written to the veto log.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {paused ? (
+                      <button
+                        onClick={() => dispatch({ type: "TIMER_RESUME", now: Date.now() })}
+                        className={btn}
+                      >
+                        Resume
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => dispatch({ type: "TIMER_PAUSE", now: Date.now() })}
+                        disabled={deadline === null}
+                        className={btn}
+                      >
+                        Pause
+                      </button>
+                    )}
+                    <button
+                      onClick={() =>
+                        dispatch({ type: "TIMER_ADD", now: Date.now(), ms: 30000 })
+                      }
+                      disabled={deadline === null && !paused}
+                      className={btn}
+                    >
+                      +30 s
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <h3 className="font-semibold">Both teams absent</h3>
