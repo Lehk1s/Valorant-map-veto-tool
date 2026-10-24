@@ -171,6 +171,7 @@ const swapTeams = (s) => ({
 const snapshot = (s) => ({
   remaining: s.remaining,
   picked: s.picked,
+  banned: s.banned,
   log: s.log,
   step: s.step,
 });
@@ -187,7 +188,7 @@ const settle = (s, now) => {
     return {
       ...s,
       remaining: [],
-      picked: [...s.picked, { map, side: null, sideBy: null }],
+      picked: [...s.picked, { map, side: null, sideBy: null, kind: "decider", by: null }],
       log: [...s.log, entry(`Decider map: ${map} (left over)`, now)],
       step: s.step + 1,
     };
@@ -216,15 +217,18 @@ const applyMap = (s, map, now, note = "") => {
   const action = FORMATS[s.format][s.step];
   const kind = kindOf(action);
   const verb = kind === "ban" ? "banned" : "picked";
+  const by = getActor(action, s);
+  const random = note !== "";
 
   return withDeadline(
     settle({
       ...s,
       history: [...s.history, snapshot(s)],
       remaining: s.remaining.filter((m) => m !== map),
+      banned: kind === "ban" ? [...s.banned, { map, by, random }] : s.banned,
       picked:
         kind === "pick"
-          ? [...s.picked, { map, side: null, sideBy: null }]
+          ? [...s.picked, { map, side: null, sideBy: null, kind: "pick", by, random }]
           : s.picked,
       log: [...s.log, entry(`${getActor(action, s)} ${verb} ${map}${note}`, now, true)],
       step: s.step + 1,
@@ -243,7 +247,10 @@ const applySide = (s, side, now, note = "") => {
     settle({
       ...s,
       history: [...s.history, snapshot(s)],
-      picked: [...s.picked.slice(0, -1), { ...last, side, sideBy: actor }],
+      picked: [
+        ...s.picked.slice(0, -1),
+        { ...last, side, sideBy: actor, sideRandom: note !== "" },
+      ],
       log: [
         ...s.log,
         entry(`${actor} picked ${side} side on ${last.map}${note}`, now, true),
@@ -279,6 +286,7 @@ const initialState = () => ({
   maps: COMP_POOL,
   remaining: COMP_POOL,
   picked: [],
+  banned: [], // { map, by, random }: kuka bannasi minkä
   log: [],
   step: 0,
   history: [],
@@ -288,6 +296,7 @@ const freshVeto = (s) => ({
   ...s,
   remaining: s.maps,
   picked: [],
+  banned: [],
   log: [],
   step: 0,
   history: [],
@@ -447,13 +456,19 @@ function reducer(s, a) {
         map,
         side: "Attack",
         sideBy: displayName(s, a.sides[i] === "B" ? "B" : "A"),
+        sideRandom: true,
+        kind: "alphabetical",
+        by: null,
       }));
 
       return {
         ...s,
         history: [...s.history, snapshot(s)],
         picked,
-        remaining: [], // pelaamattomat kartat näkyvät bannattuina (himmeinä)
+        remaining: [], // pelaamattomat kartat näkyvät himmeinä
+        banned: s.maps
+          .filter((m) => !chosen.includes(m))
+          .map((map) => ({ map, by: null, random: false })),
         log: [
           entry(
             `Both teams absent: first ${count} maps in alphabetical order, sides randomized`,
@@ -575,6 +590,15 @@ function init() {
       maps: d.maps,
       remaining: d.remaining,
       picked: d.picked,
+      banned: Array.isArray(d.banned)
+        ? d.banned
+            .filter((b) => b && typeof b.map === "string")
+            .map((b) => ({
+              map: b.map,
+              by: typeof b.by === "string" ? b.by : null,
+              random: b.random === true,
+            }))
+        : [],
       log: d.log.map((l) =>
         typeof l === "string"
           ? entry(l, null)
@@ -613,7 +637,7 @@ const IMAGE_EXT = "webp";
 const mapImage = (map) =>
   `${import.meta.env.BASE_URL}maps/${map.toLowerCase()}.${IMAGE_EXT}`;
 
-function MapCard({ map, status, clickable, onClick }) {
+function MapCard({ map, status, caption, clickable, onClick }) {
   // Jos kuvaa ei löydy (esim. oma kartta), näytetään pelkkä tekstikortti
   const [imgOk, setImgOk] = useState(true);
   const picked = status.type === "picked";
@@ -666,9 +690,14 @@ function MapCard({ map, status, clickable, onClick }) {
           Map {status.order}
         </span>
       )}
-      {banned && (
-        <span className="absolute right-2 top-2 rounded bg-black/60 px-2 py-0.5 text-xs text-[#9fb0c0]">
-          Banned
+      {/* Kuka bannasi / valitsi ja kumpi valitsi puolen */}
+      {caption && (
+        <span
+          className={`absolute inset-x-0 bottom-0 bg-black/70 px-2 py-1 text-center text-xs leading-tight ${
+            banned ? "text-[#9fb0c0]" : "text-white"
+          }`}
+        >
+          {caption}
         </span>
       )}
     </button>
@@ -758,6 +787,7 @@ export default function ValorantVetoTool() {
     maps,
     remaining,
     picked,
+    banned,
     log,
     step,
     history,
@@ -836,6 +866,30 @@ export default function ValorantVetoTool() {
     if (idx >= 0) return { type: "picked", order: idx + 1 };
     if (remaining.includes(map)) return { type: "available" };
     return { type: "banned" };
+  };
+
+  // Kortin teksti: "Banned by Alpha" tai "Picked by Beta · Alpha: Defense"
+  const captionOf = (map, status) => {
+    if (status.type === "banned") {
+      const b = banned.find((x) => x.map === map);
+      if (!b) return "Banned";
+      return b.by ? `Banned by ${b.by}${b.random ? " (random)" : ""}` : "Not played";
+    }
+    if (status.type === "picked") {
+      const p = picked[status.order - 1];
+      const how =
+        p.kind === "decider"
+          ? "Decider"
+          : p.kind === "alphabetical"
+            ? "Alphabetical order"
+            : p.by
+              ? `Picked by ${p.by}${p.random ? " (random)" : ""}`
+              : "Picked";
+      return p.side
+        ? `${how} · ${p.sideBy}: ${p.side}${p.sideRandom ? " (random)" : ""}`
+        : how;
+    }
+    return "";
   };
 
   const copyText = async (text, label) => {
@@ -1270,6 +1324,7 @@ export default function ValorantVetoTool() {
                 key={map}
                 map={map}
                 status={status}
+                caption={captionOf(map, status)}
                 clickable={clickable}
                 onClick={() => dispatch({ type: "VETO_MAP", map, now: Date.now() })}
               />

@@ -21,7 +21,7 @@ Perfect for tournament organizers, casters, and observers.
 * Full map list with individual map selection
 * Preset map pools (current competitive pool, all maps) and custom maps
 * Map pool validation per format (exactly 7 maps)
-* Map images on cards, with banned and picked maps shown visually
+* Map images on cards, with banned and picked maps shown visually and a caption of who banned or picked each map and who chose the side (for example Picked by Beta · Alpha: Defense)
 * Veto log with timestamps and turn durations, plus a copyable written veto record
 * Final series order display
 * Shareable URL (full veto state in link)
