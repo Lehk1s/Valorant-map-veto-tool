@@ -17,6 +17,7 @@ Perfect for tournament organizers, casters, and observers.
 * Auto-decider for last remaining map
 * Side pick tracking
 * Undo last action
+* Reset with confirmation, and a New match button that clears everything including the link
 * Full map list with individual map selection
 * Preset map pools (current competitive pool, all maps) and custom maps
 * Map pool validation per format (exactly 7 maps)
@@ -58,7 +59,7 @@ Open your browser at http://localhost:5173 (or the URL shown in the terminal).
 6. Click maps to ban or pick, and follow the prompts for side selections.
    With the timer on, each ban or pick has 60 seconds. If time runs out, a random map is chosen. Side picks are not timed.
 7. See the veto log and final series order update in real-time.
-8. Use Undo to revert the last action, or Reset to start over.
+8. Use Undo to revert the last action. Reset clears the veto but keeps the names and settings, and asks for confirmation if there is something to lose. New match clears everything, including the team names and the link.
 9. Copy the link to share the current veto, copy the results as text, or copy the full veto log (timestamps, turn durations, coin toss, pool and final series order) as a written record.
 
 The format, map pool, team names, coin toss, and timer setting can only be changed before the veto starts. Press Reset to unlock them.

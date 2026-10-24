@@ -485,6 +485,10 @@ function reducer(s, a) {
     case "RESET":
       return freshVeto(s);
 
+    // Uusi ottelu: nimet, heitto, asetukset ja koko veto nollataan
+    case "NEW_MATCH":
+      return initialState();
+
     // Poolia voi muokata vain ennen vedon alkua
     case "TOGGLE_MAP": {
       if (s.step !== 0) return s;
@@ -585,6 +589,16 @@ function init() {
   }
 }
 
+// URL:iin tallennettava tila (history jätetään pois, jotta linkki pysyy lyhyenä)
+const persistable = (s) => {
+  const { history: _history, ...rest } = s;
+  return rest;
+};
+
+// Totta, kun mitään ei ole muutettu alkutilasta -> URL pidetään siistinä
+const isPristine = (s) =>
+  JSON.stringify(persistable(s)) === JSON.stringify(persistable(initialState()));
+
 /* ---------- Tyylit ---------- */
 
 const btn =
@@ -661,6 +675,68 @@ function MapCard({ map, status, clickable, onClick }) {
   );
 }
 
+/* ---------- Varmistuspainike ---------- */
+
+// Kaksivaiheinen painike: jos needsConfirm on tosi, ensimmäinen klikkaus kysyy varmistuksen.
+function ConfirmButton({
+  label,
+  message,
+  confirmLabel,
+  onConfirm,
+  needsConfirm,
+  className,
+  disabled = false,
+}) {
+  const [asking, setAsking] = useState(false);
+
+  // Varmistus sulkeutuu itsestään, ettei se jää roikkumaan
+  useEffect(() => {
+    if (!asking) return;
+    const id = setTimeout(() => setAsking(false), 6000);
+    return () => clearTimeout(id);
+  }, [asking]);
+
+  useEffect(() => {
+    if (disabled) setAsking(false);
+  }, [disabled]);
+
+  if (asking) {
+    return (
+      <span
+        role="alertdialog"
+        aria-label={message}
+        onKeyDown={(e) => e.key === "Escape" && setAsking(false)}
+        className="inline-flex flex-wrap items-center gap-2 rounded border border-[#ff4655] bg-[#ff4655]/10 px-3 py-1.5 text-sm"
+      >
+        <span>{message}</span>
+        <button
+          autoFocus
+          onClick={() => {
+            setAsking(false);
+            onConfirm();
+          }}
+          className="rounded bg-[#ff4655] px-3 py-1 font-semibold text-white transition hover:bg-[#e03a48]"
+        >
+          {confirmLabel}
+        </button>
+        <button onClick={() => setAsking(false)} className={btn}>
+          Cancel
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <button
+      disabled={disabled}
+      onClick={() => (needsConfirm ? setAsking(true) : onConfirm())}
+      className={className}
+    >
+      {label}
+    </button>
+  );
+}
+
 /* ---------- Komponentti ---------- */
 
 export default function ValorantVetoTool() {
@@ -699,6 +775,8 @@ export default function ValorantVetoTool() {
   const needed = requiredPool(format);
   const poolValid = maps.length === needed;
   const started = step > 0;
+  const hasVetoProgress = step > 0 || startedAt !== null || log.length > 0;
+  const pristine = isPristine(state);
   const lastPicked = picked[picked.length - 1];
 
   // Ajastin: jos käytössä, karttoja voi klikata vasta kun kello on käynnistetty
@@ -740,10 +818,17 @@ export default function ValorantVetoTool() {
     return () => clearInterval(id);
   }, [deadline]);
 
-  // Tila URL:iin (history jätetään pois, jotta linkki pysyy lyhyenä)
+  // Tila URL:iin; puhdas alkutila (tai uusi ottelu) jättää osoitteen siistiksi
   useEffect(() => {
-    const { history: _history, ...persist } = state;
-    window.history.replaceState(null, "", `?state=${encodeState({ ...persist, v: 2 })}`);
+    if (isPristine(state)) {
+      window.history.replaceState(null, "", window.location.pathname);
+      return;
+    }
+    window.history.replaceState(
+      null,
+      "",
+      `?state=${encodeState({ ...persistable(state), v: 2 })}`
+    );
   }, [state]);
 
   const statusOf = (map) => {
@@ -1234,12 +1319,14 @@ export default function ValorantVetoTool() {
 
         {/* Toiminnot */}
         <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => dispatch({ type: "RESET" })}
+          <ConfirmButton
+            label="Reset"
+            message="Reset the veto? The log and all picks will be cleared."
+            confirmLabel="Yes, reset"
+            needsConfirm={hasVetoProgress}
+            onConfirm={() => dispatch({ type: "RESET" })}
             className="rounded bg-[#ff4655] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#e03a48]"
-          >
-            Reset
-          </button>
+          />
           <button
             onClick={() => dispatch({ type: "UNDO", now: Date.now() })}
             disabled={history.length === 0}
@@ -1247,6 +1334,15 @@ export default function ValorantVetoTool() {
           >
             Undo
           </button>
+          <ConfirmButton
+            label="New match"
+            message="Start a new match? Team names, settings and the veto will be cleared."
+            confirmLabel="Yes, start new"
+            needsConfirm={!pristine}
+            disabled={pristine}
+            onConfirm={() => dispatch({ type: "NEW_MATCH" })}
+            className={btn}
+          />
           <button
             onClick={() => copyText(window.location.href, "link")}
             className={btn}
